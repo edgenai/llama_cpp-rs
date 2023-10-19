@@ -56,9 +56,10 @@
           ninja
           cmake
           gnumake
+          pkg-config
         ];
 
-        devInputs = clangBuildInputs ++ nativeBuildInputs ++ [ pkgs.nixfmt ];
+        devInputs = clangBuildInputs ++ nativeBuildInputs ++ (with pkgs; [ nixfmt openssl ]);
 
         stdenv = pkgs.stdenv;
         lib = pkgs.lib;
