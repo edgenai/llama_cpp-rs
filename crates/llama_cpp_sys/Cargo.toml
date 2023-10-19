@@ -1,0 +1,11 @@
+[package]
+name = "llama_cpp_sys"
+version = "0.1.0"
+edition = "2021"
+authors = ["Dakota Thompson <me@scriptis.net>"]
+repository = "https://github.com/binedge/llama_cpp-rs"
+publish = true
+
+[build-dependencies]
+bindgen = "0.68.1"
+cmake = "0.1.50"

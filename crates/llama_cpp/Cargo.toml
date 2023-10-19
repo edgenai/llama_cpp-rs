@@ -1,0 +1,15 @@
+[package]
+name = "llama_cpp"
+version = "0.1.0"
+edition = "2021"
+authors = ["Dakota Thompson <me@scriptis.net>"]
+repository = "https://github.com/binedge/llama_cpp-rs"
+publish = true
+
+[dependencies]
+ctor = "0.2.5"
+flume = "0.11.0"
+llama_cpp_sys = { path = "../llama_cpp_sys" }
+num_cpus = "1.16.0"
+thiserror = "1.0.49"
+tracing = "0.1.39"
