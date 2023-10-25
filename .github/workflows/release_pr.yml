@@ -28,6 +28,8 @@ jobs:
         uses: taiki-e/install-action@v1
         with:
           tool: cargo-release
+      - name: Update submodules
+        run: git submodule update --init --recursive
       - uses: cargo-bins/release-pr@v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
