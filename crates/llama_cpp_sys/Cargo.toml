@@ -5,6 +5,7 @@ description = "Automatically-generated bindings to llama.cpp's C API"
 edition = "2021"
 authors = ["Dakota Thompson <me@scriptis.net>"]
 repository = "https://github.com/binedge/llama_cpp-rs"
+exclude = ["thirdparty/llama.cpp/build-info.h"]
 license = "MIT OR APACHE-2.0"
 readme = "../../README.md"
 publish = true
