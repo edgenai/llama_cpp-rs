@@ -13,11 +13,11 @@ fn main() {
     }
 
     let dst = cmake::Config::new(SUBMODULE_DIR)
-        .build_arg("DLLAMA_STATIC=On")
-        .build_arg("DLLAMA_LTO=Off")
-        .build_arg("DBUILD_SHARED_LIBS=On")
+        .configure_arg("DLLAMA_STATIC=On")
+        .configure_arg("DBUILD_SHARED_LIBS=On")
         .build();
 
+    println!("cargo:rustc-link-search=native={}/lib", dst.display());
     println!("cargo:rustc-link-search=native={}/lib64", dst.display());
     println!("cargo:rustc-link-lib=static=llama");
 

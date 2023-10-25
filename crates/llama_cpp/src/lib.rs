@@ -75,8 +75,10 @@ use std::ffi::{c_void, CStr, CString};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::{ptr, thread};
+use tokio::sync::RwLock;
 
 use ctor::{ctor, dtor};
+use derive_more::{Deref, DerefMut};
 use thiserror::Error;
 use tracing::{error, info, trace};
 
@@ -127,7 +129,7 @@ fn llama_cpp_down() {
 ///
 /// On its own, this isn't useful for anything other than being fed into
 /// [`LlamaSession::advance_context_with_tokens`].
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct Token(pub i32);
 
@@ -171,15 +173,38 @@ pub enum LlamaTokenizationError {
 #[error("an internal assertion failed in llama.cpp; check `tracing` output.")]
 pub struct LlamaInternalError;
 
+/// The inner part of a [`LlamaModel`].
+///
+/// This is a thin wrapper over an `Arc<RwLock<*mut llama_model>>`, which is used to share the
+/// model across threads.
+#[derive(Clone, Deref, DerefMut)]
+struct LlamaModelInner(*mut llama_model);
+
+unsafe impl Send for LlamaModelInner {}
+unsafe impl Sync for LlamaModelInner {}
+
+impl Drop for LlamaModelInner {
+    fn drop(&mut self) {
+        unsafe {
+            // SAFETY: `drop`ping more than once is unsound [1], so `self.model` cannot have been
+            // `free`d yet.
+            //
+            // [1]: See https://github.com/rust-lang/rust/issues/60977
+            llama_free_model(self.0);
+        }
+    }
+}
+
 /// A [llama.cpp](https://github.com/ggerganov/llama.cpp/tree/master) model.
 ///
 /// At present, these can only be loaded from GGML's model file format, [GGUF][gguf], via
 /// [`LlamaModel::load_from_file`].
 ///
 /// [gguf]: https://github.com/ggerganov/ggml/pull/302
+#[derive(Clone)]
 pub struct LlamaModel {
     /// A handle to the inner model on the other side of the C FFI boundary.
-    model: *mut llama_model,
+    model: Arc<RwLock<LlamaModelInner>>,
 
     /// The size of this model's vocabulary, in tokens.
     vocabulary_size: usize,
@@ -229,7 +254,7 @@ impl LlamaModel {
             };
 
             Ok(Self {
-                model,
+                model: Arc::new(RwLock::new(LlamaModelInner(model))),
                 vocabulary_size: vocabulary_size as usize,
             })
         }
@@ -262,7 +287,7 @@ impl LlamaModel {
             //
             // `out_buf` is a `Vec<Token>`, and `Token` is `#[repr(transparent)]` over an `i32`.
             llama_tokenize(
-                self.model,
+                **self.model.blocking_read(),
                 content.as_ptr() as *const i8,
                 content.len() as i32,
                 out_buf.as_mut_ptr() as *mut i32,
@@ -304,7 +329,7 @@ impl LlamaModel {
         let ctx = unsafe {
             // SAFETY: due to `_model` being declared in the `LlamaContext`, `self` must live
             // for at least the lifetime of `LlamaContext`.
-            llama_new_context_with_model(self.model, params)
+            llama_new_context_with_model(**self.model.blocking_read(), params)
         };
 
         let cpus = num_cpus::get() as u32;
@@ -316,7 +341,7 @@ impl LlamaModel {
         }
 
         LlamaSession {
-            model: self,
+            model: self.clone(),
             inner: Arc::new(LlamaContextInner { ptr: ctx }),
             history_size: 0,
 
@@ -328,18 +353,6 @@ impl LlamaModel {
             infill_middle_token: Token(unsafe { llama_token_middle(ctx) }),
             infill_suffix_token: Token(unsafe { llama_token_suffix(ctx) }),
             eot_token: Token(unsafe { llama_token_eot(ctx) }),
-        }
-    }
-}
-
-impl Drop for LlamaModel {
-    fn drop(&mut self) {
-        unsafe {
-            // SAFETY: `drop`ping more than once is unsound [1], so `self.model` cannot have been
-            // `free`d yet.
-            //
-            // [1]: See https://github.com/rust-lang/rust/issues/60977
-            llama_free_model(self.model);
         }
     }
 }
@@ -369,9 +382,9 @@ impl Drop for LlamaContextInner {
 ///
 /// This stores a small amount of state, which is destroyed when the session is dropped.
 /// You can create an arbitrary number of sessions for a model using [`LlamaModel::create_session`].
-pub struct LlamaSession<'a> {
+pub struct LlamaSession {
     /// The model this session was created from.
-    model: &'a LlamaModel,
+    model: LlamaModel,
 
     /// A pointer to the llama.cpp side of the model context.
     inner: Arc<LlamaContextInner>,
@@ -401,8 +414,6 @@ pub struct LlamaSession<'a> {
     eot_token: Token,
 }
 
-unsafe impl<'a> Send for LlamaSession<'a> {}
-
 /// An error raised while advancing the context in a [`LlamaSession`].
 #[derive(Error, Debug)]
 pub enum LlamaContextError {
@@ -431,7 +442,7 @@ pub enum LlamaContextError {
     LlamaError(#[from] LlamaInternalError),
 }
 
-impl<'a> LlamaSession<'a> {
+impl LlamaSession {
     /// Gets the byte string representation of `token` in this model's vocabulary.
     ///
     /// The returned slice is valid for the lifetime of this session, and typically encodes
@@ -536,7 +547,7 @@ impl<'a> LlamaSession<'a> {
 
     /// Starts generating tokens at the end of the context using llama.cpp's built-in Beam search.
     /// This is where you want to be if you just want some completions.
-    pub fn get_completions(&'a mut self) -> CompletionHandle<'a> {
+    pub fn get_completions(&mut self) -> CompletionHandle {
         let (tx, rx) = flume::unbounded();
 
         info!(
@@ -600,7 +611,7 @@ impl<'a> LlamaSession<'a> {
 /// An intermediate token generated during an LLM completion.
 pub struct CompletionToken<'a> {
     /// The session that generated this token.
-    ctx: &'a LlamaSession<'a>,
+    ctx: &'a LlamaSession,
 
     /// The generated token.
     token: Token,
@@ -624,12 +635,21 @@ impl<'a> AsRef<Token> for CompletionToken<'a> {
     }
 }
 
+impl<'a, T: AsRef<Token>> PartialEq<T> for CompletionToken<'a> {
+    #[inline]
+    fn eq(&self, other: &T) -> bool {
+        self.token == *other.as_ref()
+    }
+}
+
+impl Eq for CompletionToken<'_> {}
+
 /// A handle (and channel) to an ongoing completion job on an off thread.
 ///
 /// If this structure is dropped, the off thread is stopped.
 pub struct CompletionHandle<'a> {
     /// The session in charge of this completion.
-    ctx: &'a mut LlamaSession<'a>,
+    ctx: &'a mut LlamaSession,
 
     /// The token receiver bound to the off thread.
     rx: flume::Receiver<Token>,
@@ -699,7 +719,7 @@ mod detail {
                     // SAFETY: beam_views[i] exists where 0 <= i <= n_beams.
                     *beam_state.beam_views.add(i)
                 }
-                .eob = true;
+                    .eob = true;
             }
         }
 
