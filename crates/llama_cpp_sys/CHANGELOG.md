@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Bug Fixes
 
  - <csr-id-b9cde4a7a09837f7b01b124acb8325391e3b1b65/> set clang to use c++ stl
+ - <csr-id-2cb06aea62b892a032f515b78d720acb915f4a22/> use SPDX license identifiers
 
 ### Other
 
@@ -35,8 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <csr-read-only-do-not-edit/>
 
- - 8 commits contributed to the release over the course of 5 calendar days.
- - 5 commits were understood as [conventional](https://www.conventionalcommits.org).
+ - 10 commits contributed to the release over the course of 5 calendar days.
+ - 6 commits were understood as [conventional](https://www.conventionalcommits.org).
  - 3 unique issues were worked on: [#1](https://github.com/binedge/llama_cpp-rs/issues/1), [#2](https://github.com/binedge/llama_cpp-rs/issues/2), [#3](https://github.com/binedge/llama_cpp-rs/issues/3)
 
 ### Commit Details
@@ -52,6 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
  * **[#3](https://github.com/binedge/llama_cpp-rs/issues/3)**
     - Release ([`116fe8c`](https://github.com/binedge/llama_cpp-rs/commit/116fe8c82fe2c43bf9041f6dbfe2ed15d00e18e9))
  * **Uncategorized**
+    - Use SPDX license identifiers ([`2cb06ae`](https://github.com/binedge/llama_cpp-rs/commit/2cb06aea62b892a032f515b78d720acb915f4a22))
+    - Release llama_cpp_sys v0.2.0 ([`85f21a1`](https://github.com/binedge/llama_cpp-rs/commit/85f21a1eca80faa9bd3f2f160d58b21a437814aa))
     - Add CHANGELOG.md ([`0e836f5`](https://github.com/binedge/llama_cpp-rs/commit/0e836f5b60b0e2f110972ef384f23c350150f55b))
     - Set clang to use c++ stl ([`b9cde4a`](https://github.com/binedge/llama_cpp-rs/commit/b9cde4a7a09837f7b01b124acb8325391e3b1b65))
     - Latest fixes from upstream ([`96548c8`](https://github.com/binedge/llama_cpp-rs/commit/96548c840d3101091c879648074fa0ed1cee3011))
