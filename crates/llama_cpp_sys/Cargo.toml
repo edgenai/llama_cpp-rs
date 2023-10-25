@@ -10,6 +10,9 @@ include = ["src/**/*"]
 readme = "../../README.md"
 publish = true
 
+[dependencies]
+link-cplusplus = "1.0.9"
+
 [build-dependencies]
 bindgen = "0.68.1"
 cmake = "0.1.50"

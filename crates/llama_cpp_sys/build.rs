@@ -13,7 +13,7 @@ fn main() {
     }
 
     let dst = cmake::Config::new(SUBMODULE_DIR)
-        .configure_arg("DLLAMA_STATIC=Off")
+        .configure_arg("DLLAMA_STATIC=On")
         .build();
 
     println!("cargo:rustc-link-search=native={}/lib", dst.display());
