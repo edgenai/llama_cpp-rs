@@ -14,7 +14,6 @@ fn main() {
 
     let dst = cmake::Config::new(SUBMODULE_DIR)
         .configure_arg("DLLAMA_STATIC=On")
-        .configure_arg("DBUILD_SHARED_LIBS=On")
         .build();
 
     println!("cargo:rustc-link-search=native={}/lib", dst.display());
@@ -25,7 +24,11 @@ fn main() {
         .header(HEADER_DIR)
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
         .generate_comments(false)
-        .allowlist_file(HEADER_DIR)
+        .allowlist_function("llama_.*")
+        .allowlist_type("llama_.*")
+        .allowlist_function("ggml_.*")
+        .allowlist_type("ggml_.*")
+        .clang_arg("-xc++")
         .generate()
         .expect("Unable to generate bindings");
 
