@@ -9,6 +9,10 @@ license = "MIT OR Apache-2.0"
 readme = "../../README.md"
 publish = true
 
+[[bin]]
+name = "infer"
+path = "src/bin/infer.rs"
+
 [dependencies]
 ctor = "0.2.5"
 derive_more = "0.99.17"
