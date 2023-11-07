@@ -208,6 +208,27 @@ pub struct LlamaModel {
 
     /// The size of this model's vocabulary, in tokens.
     vocabulary_size: usize,
+
+    /// The beginning of sentence (BOS) token for this model.
+    bos_token: Token,
+
+    /// The end of sentence (EOS) token for this model.
+    eos_token: Token,
+
+    /// The newline (NL) token for this model.
+    nl_token: Token,
+
+    /// For infilling, the prefix token for this model.
+    infill_prefix_token: Token,
+
+    /// For infilling, the middle token for this model.
+    infill_middle_token: Token,
+
+    /// For infilling, the suffix token for this model.
+    infill_suffix_token: Token,
+
+    /// For infilling, the token for the end of the infill.
+    eot_token: Token,
 }
 
 unsafe impl Send for LlamaModel {}
@@ -256,6 +277,13 @@ impl LlamaModel {
             Ok(Self {
                 model: Arc::new(RwLock::new(LlamaModelInner(model))),
                 vocabulary_size: vocabulary_size as usize,
+                bos_token: Token(unsafe { llama_token_bos(model) }),
+                eos_token: Token(unsafe { llama_token_eos(model) }),
+                nl_token: Token(unsafe { llama_token_nl(model) }),
+                infill_prefix_token: Token(unsafe { llama_token_prefix(model) }),
+                infill_middle_token: Token(unsafe { llama_token_middle(model) }),
+                infill_suffix_token: Token(unsafe { llama_token_suffix(model) }),
+                eot_token: Token(unsafe { llama_token_eot(model) }),
             })
         }
     }
@@ -312,6 +340,21 @@ impl LlamaModel {
         }
     }
 
+    /// Gets the byte string representation of `token` in this model's vocabulary.
+    ///
+    /// The returned slice is valid for the lifetime of this session, and typically encodes
+    /// a UTF-8 string; consider using [`String::from_utf8_lossy`] if you need to display the
+    /// contents.
+    fn detokenize(&self, token: Token) -> &[u8] {
+        assert!(
+            (token.0 as usize) < self.vocabulary_size,
+            "{} is out of range for this model's vocabulary range",
+            token.0
+        );
+
+        unsafe { CStr::from_ptr(llama_token_get_text(**self.model.blocking_read(), token.0)) }.to_bytes()
+    }
+
     /// Creates a new evaluation context for this model.
     ///
     /// The model must live for at least as long as the context, but many contexts can be created
@@ -344,16 +387,43 @@ impl LlamaModel {
             model: self.clone(),
             inner: Arc::new(LlamaContextInner { ptr: ctx }),
             history_size: 0,
-
-            // SAFETY: Static constructors.
-            bos_token: Token(unsafe { llama_token_bos(ctx) }),
-            eos_token: Token(unsafe { llama_token_eos(ctx) }),
-            nl_token: Token(unsafe { llama_token_nl(ctx) }),
-            infill_prefix_token: Token(unsafe { llama_token_prefix(ctx) }),
-            infill_middle_token: Token(unsafe { llama_token_middle(ctx) }),
-            infill_suffix_token: Token(unsafe { llama_token_suffix(ctx) }),
-            eot_token: Token(unsafe { llama_token_eot(ctx) }),
         }
+    }
+
+
+    /// Returns the beginning of sentence (BOS) token for this context.
+    pub fn bos(&self) -> Token {
+        self.bos_token
+    }
+
+    /// Returns the end of sentence (EOS) token for this context.
+    pub fn eos(&self) -> Token {
+        self.eos_token
+    }
+
+    /// Returns the newline (NL) token for this context.
+    pub fn nl(&self) -> Token {
+        self.nl_token
+    }
+
+    /// Returns the infill prefix token for this context.
+    pub fn infill_prefix(&self) -> Token {
+        self.infill_prefix_token
+    }
+
+    /// Returns the infill middle token for this context.
+    pub fn infill_middle(&self) -> Token {
+        self.infill_middle_token
+    }
+
+    /// Returns the infill suffix token for this context.
+    pub fn infill_suffix(&self) -> Token {
+        self.infill_suffix_token
+    }
+
+    /// Returns the infill end of middle token for this context.
+    pub fn eot(&self) -> Token {
+        self.eot_token
     }
 }
 
@@ -391,27 +461,6 @@ pub struct LlamaSession {
 
     /// The number of tokens present in this model's context.
     history_size: usize,
-
-    /// The beginning of sentence (BOS) token for this model.
-    bos_token: Token,
-
-    /// The end of sentence (EOS) token for this model.
-    eos_token: Token,
-
-    /// The newline (NL) token for this model.
-    nl_token: Token,
-
-    /// For infilling, the prefix token for this model.
-    infill_prefix_token: Token,
-
-    /// For infilling, the middle token for this model.
-    infill_middle_token: Token,
-
-    /// For infilling, the suffix token for this model.
-    infill_suffix_token: Token,
-
-    /// For infilling, the token for the end of the infill.
-    eot_token: Token,
 }
 
 /// An error raised while advancing the context in a [`LlamaSession`].
@@ -443,21 +492,6 @@ pub enum LlamaContextError {
 }
 
 impl LlamaSession {
-    /// Gets the byte string representation of `token` in this model's vocabulary.
-    ///
-    /// The returned slice is valid for the lifetime of this session, and typically encodes
-    /// a UTF-8 string; consider using [`String::from_utf8_lossy`] if you need to display the
-    /// contents.
-    fn detokenize(&self, token: Token) -> &[u8] {
-        assert!(
-            (token.0 as usize) < self.model.vocabulary_size,
-            "{} is out of range for this model's vocabulary range",
-            token.0
-        );
-
-        unsafe { CStr::from_ptr(llama_token_get_text(self.inner.ptr, token.0)) }.to_bytes()
-    }
-
     /// Advances the inner context of this model with `tokens`.
     ///
     /// The model will generate new tokens from the end of the context.
@@ -571,41 +605,6 @@ impl LlamaSession {
 
         CompletionHandle { ctx: self, rx }
     }
-
-    /// Returns the beginning of sentence (BOS) token for this context.
-    pub fn bos(&self) -> Token {
-        self.bos_token
-    }
-
-    /// Returns the end of sentence (EOS) token for this context.
-    pub fn eos(&self) -> Token {
-        self.eos_token
-    }
-
-    /// Returns the newline (NL) token for this context.
-    pub fn nl(&self) -> Token {
-        self.nl_token
-    }
-
-    /// Returns the infill prefix token for this context.
-    pub fn infill_prefix(&self) -> Token {
-        self.infill_prefix_token
-    }
-
-    /// Returns the infill middle token for this context.
-    pub fn infill_middle(&self) -> Token {
-        self.infill_middle_token
-    }
-
-    /// Returns the infill suffix token for this context.
-    pub fn infill_suffix(&self) -> Token {
-        self.infill_suffix_token
-    }
-
-    /// Returns the infill end of middle token for this context.
-    pub fn eot(&self) -> Token {
-        self.eot_token
-    }
 }
 
 /// An intermediate token generated during an LLM completion.
@@ -620,7 +619,7 @@ pub struct CompletionToken<'a> {
 impl<'a> CompletionToken<'a> {
     /// Decodes this token, returning the bytes composing it.
     pub fn as_bytes(&self) -> &[u8] {
-        self.ctx.detokenize(self.token)
+        self.ctx.model.detokenize(self.token)
     }
 
     /// Returns this token as an `i32`.
