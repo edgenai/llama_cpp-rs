@@ -2,5 +2,6 @@
 resolver = "2"
 members = [
     "crates/llama_cpp_sys",
-    "crates/llama_cpp"
+    "crates/llama_cpp",
+    "crates/llama_cpp_tests"
 ]
