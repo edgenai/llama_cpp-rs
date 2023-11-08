@@ -1,6 +1,6 @@
 [package]
 name = "llama_cpp_sys"
-version = "0.2.0"
+version = "0.2.1"
 description = "Automatically-generated bindings to llama.cpp's C API"
 edition = "2021"
 authors = ["Dakota Thompson <me@scriptis.net>"]
