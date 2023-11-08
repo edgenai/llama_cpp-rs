@@ -1,5 +1,8 @@
 # llama_cpp-rs
 
+[![Documentation](https://docs.rs/llama_cpp/badge.svg)](https://docs.rs/llama_cpp/)
+[![Crate](https://img.shields.io/crates/v/llama_cpp.svg)](https://crates.io/crates/llama_cpp)
+
 Safe, high-level Rust bindings to the C++ project [of the same name](https://github.com/ggerganov/llama.cpp), meant to
 be as user-friendly as possible. Run GGUF-based large language models directly on your CPU in fifteen lines of code, no
 ML experience required!
