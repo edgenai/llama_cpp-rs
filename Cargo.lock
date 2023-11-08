@@ -607,7 +607,7 @@ dependencies = [
 
 [[package]]
 name = "llama_cpp_sys"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "bindgen",
  "cmake",
