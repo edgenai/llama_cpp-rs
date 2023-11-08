@@ -291,6 +291,15 @@ impl LlamaModel {
         }
     }
 
+    /// Loads a LLaMA model from a compatible GGUF (`.gguf`) file asyncronously.
+    ///
+    /// This is a thin `tokio` wrapper over [`LlamaModel::load_from_file`].
+    pub async fn load_from_file_async(file_path: impl AsRef<Path>) -> Result<Self, LlamaLoadError> {
+        let path = file_path.as_ref().to_owned();
+
+        tokio::task::spawn_blocking(move || Self::load_from_file(path)).await.unwrap()
+    }
+
     /// Converts `content` into a vector of tokens that are valid input for this model.
     ///
     /// This temporarily allocates at the amount of memory consumed by `content`, but shrinks that
@@ -690,7 +699,6 @@ mod detail {
 
     use std::ffi::{c_char, c_void, CStr};
     use std::ptr::slice_from_raw_parts;
-    use tokio::sync::OwnedSemaphorePermit;
 
     use tracing::{error, info, trace, warn};
 
