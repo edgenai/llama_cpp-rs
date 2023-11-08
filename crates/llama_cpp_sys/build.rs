@@ -61,7 +61,9 @@ fn main() {
     }
 
     if !build_info_path.exists() {
-        fs::write(build_info_path, "\
+        fs::write(
+            build_info_path,
+            "\
             #ifndef BUILD_INFO_H
             #define BUILD_INFO_H
 
@@ -72,7 +74,9 @@ fn main() {
 
             #endif // BUILD_INFO_H
 
-        ").unwrap();
+        ",
+        )
+        .unwrap();
     }
 
     let dst = cmake::Config::new(&build_dir)
@@ -88,7 +92,9 @@ fn main() {
 
     let bindings = bindgen::Builder::default()
         .header(header_path.to_string_lossy())
-        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
+        .parse_callbacks(Box::new(
+            bindgen::CargoCallbacks::new().rerun_on_header_files(false),
+        ))
         .generate_comments(false)
         .allowlist_function("llama_.*")
         .allowlist_type("llama_.*")
