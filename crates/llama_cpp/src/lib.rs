@@ -78,7 +78,7 @@ use std::ffi::{c_void, CStr, CString};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::{ptr, thread};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use ctor::{ctor, dtor};
 use derive_more::{Deref, DerefMut};
@@ -388,7 +388,7 @@ impl LlamaModel {
 
         LlamaSession {
             model: self.clone(),
-            inner: Arc::new(LlamaContextInner { ptr: ctx }),
+            inner: Arc::new(Mutex::new(LlamaContextInner { ptr: ctx }) ),
             history_size: 0,
         }
     }
@@ -460,7 +460,7 @@ pub struct LlamaSession {
     model: LlamaModel,
 
     /// A pointer to the llama.cpp side of the model context.
-    inner: Arc<LlamaContextInner>,
+    inner: Arc<Mutex<LlamaContextInner>>,
 
     /// The number of tokens present in this model's context.
     history_size: usize,
@@ -553,7 +553,7 @@ impl LlamaSession {
         if unsafe {
             // SAFETY: `llama_decode` will not fail for a valid `batch`, which we correctly
             // initialized above.
-            llama_decode(self.inner.ptr, batch)
+            llama_decode(self.inner.blocking_lock().ptr, batch)
         } != 0
         {
             return Err(LlamaInternalError.into());
@@ -592,12 +592,12 @@ impl LlamaSession {
             self.history_size,
         );
 
-        let inner = self.inner.clone();
         let past_tokens = self.history_size;
+        let mutex = self.inner.clone();
 
         thread::spawn(move || unsafe {
             llama_beam_search(
-                inner.ptr,
+                mutex.blocking_lock().ptr,
                 Some(detail::llama_beam_search_callback),
                 Box::leak(Box::new(detail::BeamSearchState { tx })) as *mut _ as *mut c_void,
                 1,
@@ -690,6 +690,7 @@ mod detail {
 
     use std::ffi::{c_char, c_void, CStr};
     use std::ptr::slice_from_raw_parts;
+    use tokio::sync::OwnedSemaphorePermit;
 
     use tracing::{error, info, trace, warn};
 
