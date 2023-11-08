@@ -21,6 +21,6 @@ jobs:
     - name: Build
       run: cargo build --verbose
     - name: Run tests
-      run: mkdir models && cargo test --verbose
+      run: mkdir /tmp/models && cargo test --verbose
       env:
-        LLAMA_CPP_TEST_MODELS: "models"
+        LLAMA_CPP_TEST_MODELS: "/tmp/models"
