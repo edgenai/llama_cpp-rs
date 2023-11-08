@@ -2,7 +2,7 @@
 //! high-performance medium for interacting with Large Language Models (LLMs) on consumer-grade
 //! hardware.
 //!
-//! **Along with llama.cpp, his crate is still in an early state, and breaking changes may occur
+//! **Along with llama.cpp, this crate is still in an early state, and breaking changes may occur
 //! between versions.** The high-level API, however, is fairly settled on.
 //!
 //! To get started, create a [`LlamaModel`] and a [`LlamaSession`]:
