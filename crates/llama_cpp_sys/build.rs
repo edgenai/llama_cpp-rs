@@ -74,6 +74,7 @@ fn main() {
 
         ").unwrap();
     }
+
     let dst = cmake::Config::new(&build_dir)
         .configure_arg("-DLLAMA_STATIC=On")
         .configure_arg("-DLLAMA_BUILD_EXAMPLES=Off")
@@ -87,7 +88,7 @@ fn main() {
 
     let bindings = bindgen::Builder::default()
         .header(header_path.to_string_lossy())
-        .parse_callbacks(Box::new(bindgen::CargoCallbacks))
+        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .generate_comments(false)
         .allowlist_function("llama_.*")
         .allowlist_type("llama_.*")
