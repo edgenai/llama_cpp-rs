@@ -1,6 +1,6 @@
 [package]
 name = "llama_cpp"
-version = "0.1.0"
+version = "0.1.2"
 description = "High-level bindings to llama.cpp with a focus on just being really, really easy to use"
 edition = "2021"
 authors = ["Dakota Thompson <me@scriptis.net>"]
@@ -13,8 +13,9 @@ publish = true
 ctor = "0.2.5"
 derive_more = "0.99.17"
 flume = "0.11.0"
-llama_cpp_sys = { version = "^0.2.0", path = "../llama_cpp_sys" }
+llama_cpp_sys = { version = "^0.2.1", path = "../llama_cpp_sys" }
 num_cpus = "1.16.0"
 thiserror = "1.0.50"
+tinyvec = { version = "1.6.0", features = ["alloc"] }
 tokio = { version = "1.33.0", features = ["sync", "rt"] }
 tracing = "0.1.39"
