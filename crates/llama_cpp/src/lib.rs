@@ -30,7 +30,7 @@
 //! let mut completions = ctx.start_completing();
 //!
 //! while let Some(next_token) = completions.next_token() {
-//!     println!("{}", String::from_utf8_lossy(next_token.as_bytes()));
+//!     println!("{}", String::from_utf8_lossy(&*next_token.detokenize()));
 //!
 //!     decoded_tokens += 1;
 //!
@@ -74,10 +74,13 @@
 //! [llama.cpp]: https://github.com/ggerganov/llama.cpp/
 
 #![warn(missing_docs)]
+
 use std::ffi::{c_void, CStr, CString};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::{ptr, thread};
+use tinyvec::TinyVec;
 use tokio::sync::{Mutex, RwLock};
 
 use ctor::{ctor, dtor};
@@ -184,6 +187,7 @@ pub struct LlamaInternalError;
 struct LlamaModelInner(*mut llama_model);
 
 unsafe impl Send for LlamaModelInner {}
+
 unsafe impl Sync for LlamaModelInner {}
 
 impl Drop for LlamaModelInner {
@@ -297,7 +301,9 @@ impl LlamaModel {
     pub async fn load_from_file_async(file_path: impl AsRef<Path>) -> Result<Self, LlamaLoadError> {
         let path = file_path.as_ref().to_owned();
 
-        tokio::task::spawn_blocking(move || Self::load_from_file(path)).await.unwrap()
+        tokio::task::spawn_blocking(move || Self::load_from_file(path))
+            .await
+            .unwrap()
     }
 
     /// Converts `content` into a vector of tokens that are valid input for this model.
@@ -364,7 +370,13 @@ impl LlamaModel {
             token.0
         );
 
-        unsafe { CStr::from_ptr(llama_token_get_text(**self.model.try_read().unwrap(), token.0)) }.to_bytes()
+        unsafe {
+            CStr::from_ptr(llama_token_get_text(
+                **self.model.try_read().unwrap(),
+                token.0,
+            ))
+        }
+        .to_bytes()
     }
 
     /// Creates a new evaluation context for this model.
@@ -384,7 +396,7 @@ impl LlamaModel {
         let ctx = unsafe {
             // SAFETY: due to `_model` being declared in the `LlamaContext`, `self` must live
             // for at least the lifetime of `LlamaContext`.
-            llama_new_context_with_model(**self.model.blocking_read(), params)
+            llama_new_context_with_model(**self.model.try_read().unwrap(), params)
         };
 
         let cpus = num_cpus::get() as u32;
@@ -396,12 +408,13 @@ impl LlamaModel {
         }
 
         LlamaSession {
-            model: self.clone(),
-            inner: Arc::new(Mutex::new(LlamaContextInner { ptr: ctx }) ),
-            history_size: 0,
+            inner: Arc::new(LlamaSessionInner {
+                model: self.clone(),
+                ctx: Mutex::new(LlamaContextInner { ptr: ctx }),
+                history_size: AtomicUsize::new(0),
+            }),
         }
     }
-
 
     /// Returns the beginning of sentence (BOS) token for this context.
     pub fn bos(&self) -> Token {
@@ -448,6 +461,7 @@ struct LlamaContextInner {
 }
 
 unsafe impl Send for LlamaContextInner {}
+
 unsafe impl Sync for LlamaContextInner {}
 
 impl Drop for LlamaContextInner {
@@ -464,15 +478,21 @@ impl Drop for LlamaContextInner {
 ///
 /// This stores a small amount of state, which is destroyed when the session is dropped.
 /// You can create an arbitrary number of sessions for a model using [`LlamaModel::create_session`].
+#[derive(Clone)]
 pub struct LlamaSession {
+    inner: Arc<LlamaSessionInner>,
+}
+
+/// The cloned part of a [`LlamaSession`].
+struct LlamaSessionInner {
     /// The model this session was created from.
     model: LlamaModel,
 
     /// A pointer to the llama.cpp side of the model context.
-    inner: Arc<Mutex<LlamaContextInner>>,
+    ctx: Mutex<LlamaContextInner>,
 
     /// The number of tokens present in this model's context.
-    history_size: usize,
+    history_size: AtomicUsize,
 }
 
 /// An error raised while advancing the context in a [`LlamaSession`].
@@ -508,7 +528,7 @@ impl LlamaSession {
     ///
     /// The model will generate new tokens from the end of the context.
     pub fn advance_context_with_tokens(
-        &mut self,
+        &self,
         tokens: impl AsRef<[Token]>,
     ) -> Result<(), LlamaContextError> {
         let tokens = tokens.as_ref();
@@ -562,7 +582,7 @@ impl LlamaSession {
         if unsafe {
             // SAFETY: `llama_decode` will not fail for a valid `batch`, which we correctly
             // initialized above.
-            llama_decode(self.inner.blocking_lock().ptr, batch)
+            llama_decode(self.inner.ctx.blocking_lock().ptr, batch)
         } != 0
         {
             return Err(LlamaInternalError.into());
@@ -577,40 +597,78 @@ impl LlamaSession {
             llama_batch_free(batch)
         };
 
-        self.history_size += tokens.len();
+        self.inner
+            .history_size
+            .fetch_add(n_tokens, Ordering::SeqCst);
 
         Ok(())
+    }
+
+    /// Advances the inner context of this model with `tokens`.
+    ///
+    /// This is a thin `tokio::spawn_blocking` wrapper around
+    /// [`LlamaSession::advance_context_with_tokens`].
+    pub async fn advance_context_with_tokens_async(
+        &mut self,
+        tokens: impl AsRef<[Token]>,
+    ) -> Result<(), LlamaContextError> {
+        let tokens = tokens.as_ref().to_owned();
+        let session = self.clone();
+
+        tokio::task::spawn_blocking(move || session.advance_context_with_tokens(tokens))
+            .await
+            .unwrap()
     }
 
     /// Tokenizes and feeds an arbitrary byte buffer `ctx` into this model.
     ///
     /// `ctx` is typically a UTF-8 string, but anything that can be downcast to bytes is accepted.
     pub fn advance_context(&mut self, ctx: impl AsRef<[u8]>) -> Result<(), LlamaContextError> {
-        let tokens = self.model.tokenize_bytes(ctx.as_ref())?.into_boxed_slice();
+        let tokens = self
+            .inner
+            .model
+            .tokenize_bytes(ctx.as_ref())?
+            .into_boxed_slice();
 
         self.advance_context_with_tokens(tokens)
+    }
+
+    /// Tokenizes and feeds an arbitrary byte buffer `ctx` into this model.
+    ///
+    /// This is a thin `tokio::spawn_blocking` wrapper around
+    /// [`LlamaSession::advance_context`].
+    pub async fn advance_context_async(
+        &self,
+        ctx: impl AsRef<[u8]>,
+    ) -> Result<(), LlamaContextError> {
+        let ctx = ctx.as_ref().to_owned();
+        let session = self.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let tokens = session.inner.model.tokenize_bytes(ctx)?.into_boxed_slice();
+
+            session.advance_context_with_tokens(tokens)
+        })
+        .await
+        .unwrap()
     }
 
     /// Starts generating tokens at the end of the context using llama.cpp's built-in Beam search.
     /// This is where you want to be if you just want some completions.
     pub fn start_completing(&mut self) -> CompletionHandle {
         let (tx, rx) = flume::unbounded();
+        let history_size = self.inner.history_size.load(Ordering::SeqCst);
+        let session = self.clone();
 
-        info!(
-            "Generating completions with {} tokens of history",
-            self.history_size,
-        );
-
-        let past_tokens = self.history_size;
-        let mutex = self.inner.clone();
+        info!("Generating completions with {history_size} tokens of history");
 
         thread::spawn(move || unsafe {
             llama_beam_search(
-                mutex.blocking_lock().ptr,
+                session.inner.ctx.blocking_lock().ptr,
                 Some(detail::llama_beam_search_callback),
                 Box::leak(Box::new(detail::BeamSearchState { tx })) as *mut _ as *mut c_void,
                 1,
-                past_tokens as i32,
+                history_size as i32,
                 32_768,
             );
         });
@@ -620,7 +678,7 @@ impl LlamaSession {
 
     /// Returns the model this session was created from.
     pub fn model(&self) -> LlamaModel {
-        self.model.clone()
+        self.inner.model.clone()
     }
 }
 
@@ -634,9 +692,11 @@ pub struct CompletionToken<'a> {
 }
 
 impl<'a> CompletionToken<'a> {
-    /// Decodes this token, returning the bytes composing it.
-    pub fn as_bytes(&self) -> &[u8] {
-        self.ctx.model.detokenize(self.token)
+    /// Decodes this token, returning the bytes it is composed of.
+    pub fn detokenize(&self) -> TinyVec<[u8; 8]> {
+        let model = self.ctx.model();
+
+        model.detokenize(self.token).into()
     }
 
     /// Returns this token as an `i32`.
@@ -735,7 +795,7 @@ mod detail {
                     // SAFETY: beam_views[i] exists where 0 <= i <= n_beams.
                     *beam_state.beam_views.add(i)
                 }
-                    .eob = true;
+                .eob = true;
             }
         }
 
