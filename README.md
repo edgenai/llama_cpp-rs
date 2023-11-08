@@ -26,8 +26,8 @@ let mut decoded_tokens = 0;
 // handle is dropped, tokens stop generating!
 let mut completions = ctx.get_completions();
 
-while let Some(next_token) = completions.next_token() {
-    println!("{}", String::from_utf8_lossy(next_token.as_bytes()));
+while let Some(next_token) = completions.detokenize() {
+    println!("{}", String::from_utf8_lossy(&*next_token.as_bytes()));
     decoded_tokens += 1;
     if decoded_tokens > max_tokens {
         break;
