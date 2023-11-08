@@ -617,6 +617,11 @@ impl LlamaSession {
 
         CompletionHandle { ctx: self, rx }
     }
+
+    /// Returns the model this session was created from.
+    pub fn model(&self) -> LlamaModel {
+        self.model.clone()
+    }
 }
 
 /// An intermediate token generated during an LLM completion.
