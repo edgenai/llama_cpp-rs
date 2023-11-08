@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v0.2.1 (2023-11-08)
+
+### Chore
+
+ - <csr-id-ccb794d346de87e48199f9f0f3564f3c7a2cd607/> Update to `bindgen` 0.69.1
+
+### Bug Fixes
+
+ - <csr-id-4eb0bc9800877e460fe0d1d25398f35976b4d730/> `start_completing` should not be invoked on a per-iteration basis
+   There's still some UB that can be triggered due to llama.cpp's threading model, which needs patching up.
+
+### Commit Statistics
+
+<csr-read-only-do-not-edit/>
+
+ - 2 commits contributed to the release.
+ - 13 days passed between releases.
+ - 2 commits were understood as [conventional](https://www.conventionalcommits.org).
+ - 0 issues like '(#ID)' were seen in commit messages
+
+### Commit Details
+
+<csr-read-only-do-not-edit/>
+
+<details><summary>view details</summary>
+
+ * **Uncategorized**
+    - Update to `bindgen` 0.69.1 ([`ccb794d`](https://github.com/binedge/llama_cpp-rs/commit/ccb794d346de87e48199f9f0f3564f3c7a2cd607))
+    - `start_completing` should not be invoked on a per-iteration basis ([`4eb0bc9`](https://github.com/binedge/llama_cpp-rs/commit/4eb0bc9800877e460fe0d1d25398f35976b4d730))
+</details>
+
 ## v0.2.0 (2023-10-25)
 
 <csr-id-116fe8c82fe2c43bf9041f6dbfe2ed15d00e18e9/>
@@ -36,7 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <csr-read-only-do-not-edit/>
 
- - 10 commits contributed to the release over the course of 5 calendar days.
+ - 11 commits contributed to the release over the course of 5 calendar days.
  - 6 commits were understood as [conventional](https://www.conventionalcommits.org).
  - 3 unique issues were worked on: [#1](https://github.com/binedge/llama_cpp-rs/issues/1), [#2](https://github.com/binedge/llama_cpp-rs/issues/2), [#3](https://github.com/binedge/llama_cpp-rs/issues/3)
 
@@ -53,6 +84,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
  * **[#3](https://github.com/binedge/llama_cpp-rs/issues/3)**
     - Release ([`116fe8c`](https://github.com/binedge/llama_cpp-rs/commit/116fe8c82fe2c43bf9041f6dbfe2ed15d00e18e9))
  * **Uncategorized**
+    - Release llama_cpp_sys v0.2.0 ([`fa3af83`](https://github.com/binedge/llama_cpp-rs/commit/fa3af83e51f552ad60e3f4e06cb3582b0cb4be2f))
     - Use SPDX license identifiers ([`2cb06ae`](https://github.com/binedge/llama_cpp-rs/commit/2cb06aea62b892a032f515b78d720acb915f4a22))
     - Release llama_cpp_sys v0.2.0 ([`85f21a1`](https://github.com/binedge/llama_cpp-rs/commit/85f21a1eca80faa9bd3f2f160d58b21a437814aa))
     - Add CHANGELOG.md ([`0e836f5`](https://github.com/binedge/llama_cpp-rs/commit/0e836f5b60b0e2f110972ef384f23c350150f55b))
