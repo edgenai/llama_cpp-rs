@@ -26,7 +26,10 @@
 //!
 //! // `ctx.get_completions` creates a worker thread that generates tokens. When the completion
 //! // handle is dropped, tokens stop generating!
-//! while let Some(next_token) = ctx.get_completions().next_token() {
+//!
+//! let mut completions = ctx.start_completing();
+//!
+//! while let Some(next_token) = completions.next_token() {
 //!     println!("{}", String::from_utf8_lossy(next_token.as_bytes()));
 //!
 //!     decoded_tokens += 1;
@@ -315,7 +318,7 @@ impl LlamaModel {
             //
             // `out_buf` is a `Vec<Token>`, and `Token` is `#[repr(transparent)]` over an `i32`.
             llama_tokenize(
-                **self.model.blocking_read(),
+                **self.model.try_read().unwrap(),
                 content.as_ptr() as *const i8,
                 content.len() as i32,
                 out_buf.as_mut_ptr() as *mut i32,
@@ -352,7 +355,7 @@ impl LlamaModel {
             token.0
         );
 
-        unsafe { CStr::from_ptr(llama_token_get_text(**self.model.blocking_read(), token.0)) }.to_bytes()
+        unsafe { CStr::from_ptr(llama_token_get_text(**self.model.try_read().unwrap(), token.0)) }.to_bytes()
     }
 
     /// Creates a new evaluation context for this model.
@@ -581,7 +584,7 @@ impl LlamaSession {
 
     /// Starts generating tokens at the end of the context using llama.cpp's built-in Beam search.
     /// This is where you want to be if you just want some completions.
-    pub fn get_completions(&mut self) -> CompletionHandle {
+    pub fn start_completing(&mut self) -> CompletionHandle {
         let (tx, rx) = flume::unbounded();
 
         info!(
@@ -599,7 +602,7 @@ impl LlamaSession {
                 Box::leak(Box::new(detail::BeamSearchState { tx })) as *mut _ as *mut c_void,
                 1,
                 past_tokens as i32,
-                2048,
+                32_768,
             );
         });
 
@@ -657,7 +660,7 @@ pub struct CompletionHandle<'a> {
 impl<'a> CompletionHandle<'a> {
     /// Blocks the current thread, resolving to the next completed token, or `None` if EOS is
     /// reached.
-    pub fn next_token(&self) -> Option<CompletionToken<'_>> {
+    pub fn next_token(&mut self) -> Option<CompletionToken<'_>> {
         self.rx.recv().ok().map(|token| CompletionToken {
             ctx: self.ctx,
             token,
@@ -666,7 +669,7 @@ impl<'a> CompletionHandle<'a> {
 
     /// Asynchronously yields the current thread, resolving to the next completed token, or `None`
     /// if EOS is reached.
-    pub async fn next_token_async(&self) -> Option<CompletionToken<'_>> {
+    pub async fn next_token_async(&mut self) -> Option<CompletionToken<'_>> {
         self.rx
             .recv_async()
             .await
