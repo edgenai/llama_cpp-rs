@@ -1,0 +1,13 @@
+[package]
+name = "llama_cpp_tests"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+blake3 = "1.5.0"
+data-encoding = "2.4.0"
+directories = "5.0.1"
+llama_cpp = { path = "../llama_cpp" }
+llama_cpp_sys = { path = "../llama_cpp_sys" }
+reqwest = "0.11.22"
+tokio = { version = "1.33.0", features = ["full"] }
