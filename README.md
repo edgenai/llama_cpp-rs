@@ -21,7 +21,9 @@ let mut decoded_tokens = 0;
 
 // `ctx.get_completions` creates a worker thread that generates tokens. When the completion
 // handle is dropped, tokens stop generating!
-while let Some(next_token) = ctx.get_completions().next_token() {
+let mut completions = ctx.get_completions();
+
+while let Some(next_token) = completions.next_token() {
     println!("{}", String::from_utf8_lossy(next_token.as_bytes()));
     decoded_tokens += 1;
     if decoded_tokens > max_tokens {
