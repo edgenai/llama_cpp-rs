@@ -5,7 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v0.1.2 (2023-11-08)
+
+### New Features
+
+ - <csr-id-dcfccdf721eb47a364cce5b1c7a54bcf94335ac0/> more `async` function variants
+ - <csr-id-56285a119633682951f8748e85c6b8988e514232/> add `LlamaSession.model`
+
+### Commit Statistics
+
+<csr-read-only-do-not-edit/>
+
+ - 2 commits contributed to the release.
+ - 2 commits were understood as [conventional](https://www.conventionalcommits.org).
+ - 0 issues like '(#ID)' were seen in commit messages
+
+### Commit Details
+
+<csr-read-only-do-not-edit/>
+
+<details><summary>view details</summary>
+
+ * **Uncategorized**
+    - More `async` function variants ([`dcfccdf`](https://github.com/binedge/llama_cpp-rs/commit/dcfccdf721eb47a364cce5b1c7a54bcf94335ac0))
+    - Add `LlamaSession.model` ([`56285a1`](https://github.com/binedge/llama_cpp-rs/commit/56285a119633682951f8748e85c6b8988e514232))
+</details>
+
 ## v0.1.1 (2023-11-08)
+
+<csr-id-3eddbab3cc35a59acbe66fa4f5333a9ca0edb326/>
 
 ### Chore
 
@@ -26,7 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <csr-read-only-do-not-edit/>
 
- - 5 commits contributed to the release.
+ - 6 commits contributed to the release.
  - 13 days passed between releases.
  - 4 commits were understood as [conventional](https://www.conventionalcommits.org).
  - 0 issues like '(#ID)' were seen in commit messages
@@ -38,6 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <details><summary>view details</summary>
 
  * **Uncategorized**
+    - Release llama_cpp_sys v0.2.1, llama_cpp v0.1.1 ([`ef4e3f7`](https://github.com/binedge/llama_cpp-rs/commit/ef4e3f7a3c868a892f26acfae2a5211de4900d1c))
     - Add `LlamaModel::load_from_file_async` ([`3bada65`](https://github.com/binedge/llama_cpp-rs/commit/3bada658c9139af1c3dcdb32c60c222efb87a9f6))
     - Remove debug binary from Cargo.toml ([`3eddbab`](https://github.com/binedge/llama_cpp-rs/commit/3eddbab3cc35a59acbe66fa4f5333a9ca0edb326))
     - Require `llama_context` is accessed from behind a mutex ([`b676baa`](https://github.com/binedge/llama_cpp-rs/commit/b676baa3c1a6863c7afd7a88b6f7e8ddd2a1b9bd))
