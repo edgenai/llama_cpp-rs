@@ -68,7 +68,7 @@ mod tests {
                     _ = tokio::time::sleep_until(timeout_by) => {
                         break;
                     }
-                    completion = completions.next_token_async() => {
+                    _completion = completions.next_token_async() => {
                         continue;
                     }
                 }
