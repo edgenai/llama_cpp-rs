@@ -10,19 +10,19 @@ readme = "../../README.md"
 publish = true
 
 [dependencies]
-ctor = "0.2.5"
-derive_more = "0.99.17"
-flume = "0.11.0"
-llama_cpp_sys = { version = "^0.3", path = "../llama_cpp_sys" }
-num_cpus = "1.16.0"
-thiserror = "1.0.50"
-tinyvec = { version = "1.6.0", features = ["alloc"] }
-tokio = { version = "1.33.0", features = ["sync", "rt"] }
-tracing = "0.1.39"
+ctor = { workspace = true }
+derive_more = { workspace = true }
+flume = { workspace = true }
+llama_cpp_sys = { workspace = true }
+num_cpus = { workspace = true }
+thiserror = { workspace = true }
+tinyvec = { workspace = true, features = ["alloc"] }
+tokio = { workspace = true, features = ["sync", "rt"] }
+tracing = { workspace = true }
 
 [features]
 default = ["native"]
-native = ["llama_cpp_sys/native", "avx", "avx2", "fma", "accel"]
+native = ["llama_cpp_sys/native", "avx", "avx2", "fma", "f16c", "accel"]
 avx = ["llama_cpp_sys/avx"]
 avx2 = ["llama_cpp_sys/avx2"]
 avx512 = ["llama_cpp_sys/avx512"]

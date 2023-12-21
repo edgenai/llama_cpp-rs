@@ -900,16 +900,14 @@ pub struct SessionParams {
 
 impl Default for SessionParams {
     fn default() -> Self {
+        let threads = num_cpus::get_physical() as u32;
+
         Self {
             seed: u32::MAX,
             n_ctx: 0,
             n_batch: 0,
-            n_threads: std::thread::available_parallelism()
-                .unwrap_or(unsafe { NonZeroUsize::new_unchecked(1) })
-                .get() as u32,
-            n_threads_batch: std::thread::available_parallelism()
-                .unwrap_or(unsafe { NonZeroUsize::new_unchecked(1) })
-                .get() as u32,
+            n_threads: threads,
+            n_threads_batch: threads,
             rope_scaling_type: 0,
             rope_freq_base: 0.0,
             rope_freq_scale: 0.0,

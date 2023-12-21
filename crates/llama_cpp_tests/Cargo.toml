@@ -6,9 +6,9 @@ publish = false
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-blake3 = "1.5.0"
-data-encoding = "2.4.0"
-directories = "5.0.1"
-llama_cpp = { path = "../llama_cpp", default-features = false, features = ["native"] }
-reqwest = "0.11.22"
-tokio = { version = "1.33.0", features = ["full"] }
+blake3 = { workspace = true }
+data-encoding = { workspace = true }
+directories = { workspace = true }
+llama_cpp = { worspace = true, default-features = false, features = ["native"] }
+reqwest = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
