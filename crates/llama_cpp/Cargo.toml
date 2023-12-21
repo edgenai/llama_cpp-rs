@@ -19,3 +19,27 @@ thiserror = "1.0.50"
 tinyvec = { version = "1.6.0", features = ["alloc"] }
 tokio = { version = "1.33.0", features = ["sync", "rt"] }
 tracing = "0.1.39"
+
+[features]
+default = ["native"]
+native = ["llama_cpp_sys/native", "avx", "avx2", "fma", "accel"]
+avx = ["llama_cpp_sys/avx"]
+avx2 = ["llama_cpp_sys/avx2"]
+avx512 = ["llama_cpp_sys/avx512"]
+avx512_vmbi = ["llama_cpp_sys/avx512_vmbi"]
+avx512_vnni = ["llama_cpp_sys/avx512_vnni"]
+fma = ["llama_cpp_sys/fma"]
+f16c = ["llama_cpp_sys/f16c"] # implied when compiled using MSVC with avx2/avx512
+accel = ["llama_cpp_sys/accel"] # Accelerate framework
+mpi = ["llama_cpp_sys/mpi"]
+cuda = ["llama_cpp_sys/cuda"]
+cuda_f16 = ["llama_cpp_sys/cuda_f16", "cuda"]
+cuda_dmmv = ["llama_cpp_sys/cuda_dmmv", "cuda"] # use dmmv instead of mmvq CUDA kernels
+cuda_mmq = ["llama_cpp_sys/cuda_mmq", "cuda"] # use mmq kernels instead of cuBLAS
+metal = ["llama_cpp_sys/metal"]
+blas = ["llama_cpp_sys/blas"]
+hipblas = ["llama_cpp_sys/hipblas"]
+clblast = ["llama_cpp_sys/clblast"]
+
+[lib]
+doctest = false

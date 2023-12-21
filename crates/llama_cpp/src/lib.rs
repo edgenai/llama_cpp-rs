@@ -8,14 +8,15 @@
 //! To get started, create a [`LlamaModel`] and a [`LlamaSession`]:
 //!
 //! ```no_run
-//! use llama_cpp::LlamaModel;
+//! use llama_cpp::{LlamaModel, LlamaParams, SessionParams};
+//! use llama_cpp::standard_sampler::StandardSampler;
 //!
 //! // Create a model from anything that implements `AsRef<Path>`:
-//! let model = LlamaModel::load_from_file("path_to_model.gguf").expect("Could not load model");
+//! let model = LlamaModel::load_from_file("path_to_model.gguf", LlamaParams::default()).expect("Could not load model");
 //!
 //! // A `LlamaModel` holds the weights shared across many _sessions_; while your model may be
 //! // several gigabytes large, a session is typically a few dozen to a hundred megabytes!
-//! let mut ctx = model.create_session();
+//! let mut ctx = model.create_session(SessionParams::default());
 //!
 //! // You can feed anything that implements `AsRef<[u8]>` into the model's context.
 //! ctx.advance_context("This is the story of a man named Stanley.").unwrap();
@@ -24,10 +25,10 @@
 //! let max_tokens = 1024;
 //! let mut decoded_tokens = 0;
 //!
-//! // `ctx.get_completions` creates a worker thread that generates tokens. When the completion
+//! // `ctx.get_completions_with` creates a worker thread that generates tokens. When the completion
 //! // handle is dropped, tokens stop generating!
 //!
-//! let mut completions = ctx.start_completing();
+//! let mut completions = ctx.start_completing_with(StandardSampler::default(), 1024);
 //!
 //! while let Some(next_token) = completions.next_token() {
 //!     println!("{}", String::from_utf8_lossy(&*next_token.detokenize()));
@@ -76,26 +77,30 @@
 #![warn(missing_docs)]
 
 use std::ffi::{c_void, CStr, CString};
+use std::num::NonZeroUsize;
+use std::ops::Add;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::{ptr, thread};
-use tinyvec::TinyVec;
-use tokio::sync::{Mutex, RwLock};
 
 use ctor::{ctor, dtor};
 use derive_more::{Deref, DerefMut};
 use thiserror::Error;
+use tokio::sync::{Mutex, RwLock};
 use tracing::{error, info, trace};
 
 use llama_cpp_sys::{
-    llama_backend_free, llama_backend_init, llama_batch_free, llama_batch_init, llama_beam_search,
-    llama_context, llama_context_default_params, llama_decode, llama_free, llama_free_model,
-    llama_load_model_from_file, llama_log_set, llama_model, llama_model_default_params,
-    llama_n_vocab, llama_new_context_with_model, llama_set_n_threads, llama_token_bos,
-    llama_token_eos, llama_token_eot, llama_token_get_text, llama_token_middle, llama_token_nl,
-    llama_token_prefix, llama_token_suffix, llama_tokenize,
+    llama_backend_free, llama_backend_init, llama_batch, llama_batch_free, llama_batch_init,
+    llama_beam_search, llama_context, llama_context_default_params, llama_decode, llama_free,
+    llama_free_model, llama_get_logits_ith, llama_load_model_from_file, llama_log_set, llama_model,
+    llama_model_default_params, llama_n_vocab, llama_new_context_with_model, llama_token_bos,
+    llama_token_data, llama_token_data_array, llama_token_eos, llama_token_eot,
+    llama_token_get_text, llama_token_middle, llama_token_nl, llama_token_prefix,
+    llama_token_suffix, llama_tokenize,
 };
+
+pub mod standard_sampler;
 
 /// [ctor](https://docs.rs/ctor/latest/ctor/) wind-up binding to invoke llama.cpp's
 /// `llama_backend_init`, which is required before using the library.
@@ -248,12 +253,19 @@ impl LlamaModel {
     /// If you're stuck here, consider setting up [`tracing`][tracing] to get the whole story.
     ///
     /// [tracing]: https://docs.rs/tracing/latest/tracing/
-    pub fn load_from_file(file_path: impl AsRef<Path>) -> Result<Self, LlamaLoadError> {
+    pub fn load_from_file(
+        file_path: impl AsRef<Path>,
+        model_params: LlamaParams,
+    ) -> Result<Self, LlamaLoadError> {
         let file_path = file_path.as_ref();
 
         if !file_path.exists() {
             return Err(LlamaLoadError::DoesNotExist(file_path.into()));
         }
+
+        let mut params = unsafe { llama_model_default_params() };
+
+        // TODO create params from model_params
 
         let model = unsafe {
             // SAFETY: Assume that llama.cpp will gracefully fail and return `nullptr` if
@@ -269,7 +281,7 @@ impl LlamaModel {
                         )
                     })
                     .as_ptr(),
-                llama_model_default_params(),
+                params,
             )
         };
 
@@ -298,10 +310,13 @@ impl LlamaModel {
     /// Loads a LLaMA model from a compatible GGUF (`.gguf`) file asyncronously.
     ///
     /// This is a thin `tokio` wrapper over [`LlamaModel::load_from_file`].
-    pub async fn load_from_file_async(file_path: impl AsRef<Path>) -> Result<Self, LlamaLoadError> {
+    pub async fn load_from_file_async(
+        file_path: impl AsRef<Path>,
+        params: LlamaParams,
+    ) -> Result<Self, LlamaLoadError> {
         let path = file_path.as_ref().to_owned();
 
-        tokio::task::spawn_blocking(move || Self::load_from_file(path))
+        tokio::task::spawn_blocking(move || Self::load_from_file(path, params))
             .await
             .unwrap()
     }
@@ -363,7 +378,7 @@ impl LlamaModel {
     /// The returned slice is valid for the lifetime of this session, and typically encodes
     /// a UTF-8 string; consider using [`String::from_utf8_lossy`] if you need to display the
     /// contents.
-    fn detokenize(&self, token: Token) -> &[u8] {
+    pub fn detokenize(&self, token: Token) -> &[u8] {
         assert!(
             (token.0 as usize) < self.vocabulary_size,
             "{} is out of range for this model's vocabulary range",
@@ -387,11 +402,16 @@ impl LlamaModel {
     /// The vast majority of loaded data (weights) are immutably stored in the model, with a much
     /// smaller state belonging to each context. For Zephyr 7B, this works out to about 4GiB for
     /// the model weights and 100MiB for each session.
-    pub fn create_session(&self) -> LlamaSession {
-        let params = unsafe {
+    pub fn create_session(&self, session_params: SessionParams) -> LlamaSession {
+        let mut params = unsafe {
             // SAFETY: Stack constructor; always safe.
             llama_context_default_params()
         };
+
+        // TODO refactor this
+        params.seed = session_params.seed;
+        params.n_threads = session_params.n_threads;
+        params.n_threads_batch = session_params.n_threads_batch;
 
         let ctx = unsafe {
             // SAFETY: due to `_model` being declared in the `LlamaContext`, `self` must live
@@ -399,19 +419,12 @@ impl LlamaModel {
             llama_new_context_with_model(**self.model.try_read().unwrap(), params)
         };
 
-        let cpus = num_cpus::get() as u32;
-
-        unsafe {
-            // SAFETY: The presence of `u32::MAX` CPU cores would create a black hole, so you
-            // should consider closing your laptop and running.
-            llama_set_n_threads(ctx, cpus, cpus);
-        }
-
         LlamaSession {
             inner: Arc::new(LlamaSessionInner {
                 model: self.clone(),
                 ctx: Mutex::new(LlamaContextInner { ptr: ctx }),
                 history_size: AtomicUsize::new(0),
+                last_batch_size: AtomicUsize::new(0),
             }),
         }
     }
@@ -493,6 +506,9 @@ struct LlamaSessionInner {
 
     /// The number of tokens present in this model's context.
     history_size: AtomicUsize,
+
+    /// The number of tokens present in this model's context.
+    last_batch_size: AtomicUsize,
 }
 
 /// An error raised while advancing the context in a [`LlamaSession`].
@@ -528,7 +544,7 @@ impl LlamaSession {
     ///
     /// The model will generate new tokens from the end of the context.
     pub fn advance_context_with_tokens(
-        &self,
+        &mut self,
         tokens: impl AsRef<[Token]>,
     ) -> Result<(), LlamaContextError> {
         let tokens = tokens.as_ref();
@@ -547,10 +563,11 @@ impl LlamaSession {
 
         let mut batch = unsafe {
             // SAFETY: `llama_batch_init` is a stack constructor, and should never fail.
-            llama_batch_init(n_tokens.max(4) as i32, 0, 1)
+            llama_batch_init(n_tokens as i32, 0, 1)
         };
 
         batch.n_tokens = n_tokens as i32;
+        let current_history = self.inner.history_size.load(Ordering::SeqCst);
 
         for (i, token) in tokens.iter().enumerate() {
             trace!("Writing token {i} of {n_tokens} ({token:?})");
@@ -559,8 +576,8 @@ impl LlamaSession {
                 // SAFETY: For all 0 < i < n_tokens, `llama_batch_init` created each of these
                 // offsets; although each offset may be currently uninitialized.
                 batch.token.add(i).write(token.0);
-                batch.pos.add(i).write(i as i32);
-                batch.logits.add(i).write(1);
+                batch.pos.add(i).write((current_history + i) as i32);
+                batch.logits.add(i).write(0);
                 batch.n_seq_id.add(i).write(1);
 
                 let seq_ptr = batch.seq_id.add(i);
@@ -601,6 +618,8 @@ impl LlamaSession {
             .history_size
             .fetch_add(n_tokens, Ordering::SeqCst);
 
+        self.inner.last_batch_size.store(n_tokens, Ordering::SeqCst);
+
         Ok(())
     }
 
@@ -613,7 +632,7 @@ impl LlamaSession {
         tokens: impl AsRef<[Token]>,
     ) -> Result<(), LlamaContextError> {
         let tokens = tokens.as_ref().to_owned();
-        let session = self.clone();
+        let mut session = self.clone();
 
         tokio::task::spawn_blocking(move || session.advance_context_with_tokens(tokens))
             .await
@@ -638,11 +657,11 @@ impl LlamaSession {
     /// This is a thin `tokio::spawn_blocking` wrapper around
     /// [`LlamaSession::advance_context`].
     pub async fn advance_context_async(
-        &self,
+        &mut self,
         ctx: impl AsRef<[u8]>,
     ) -> Result<(), LlamaContextError> {
         let ctx = ctx.as_ref().to_owned();
-        let session = self.clone();
+        let mut session = self.clone();
 
         tokio::task::spawn_blocking(move || {
             let tokens = session.inner.model.tokenize_bytes(ctx)?.into_boxed_slice();
@@ -654,7 +673,7 @@ impl LlamaSession {
     }
 
     /// Starts generating tokens at the end of the context using llama.cpp's built-in Beam search.
-    /// This is where you want to be if you just want some completions.
+    /// TODO fix: beam search keeps going even after it should have ended
     pub fn start_completing(&mut self) -> CompletionHandle {
         let (tx, rx) = flume::unbounded();
         let history_size = self.inner.history_size.load(Ordering::SeqCst);
@@ -663,17 +682,97 @@ impl LlamaSession {
         info!("Generating completions with {history_size} tokens of history");
 
         thread::spawn(move || unsafe {
+            let state = Box::new(detail::BeamSearchState { tx });
+            // SAFETY: `state_ptr` is converted back to a [`Box`] and freed in [`detail::llama_beam_search_callback`]
+            let state_ptr = Box::into_raw(state);
+
             llama_beam_search(
                 session.inner.ctx.blocking_lock().ptr,
                 Some(detail::llama_beam_search_callback),
-                Box::leak(Box::new(detail::BeamSearchState { tx })) as *mut _ as *mut c_void,
+                state_ptr as *mut _ as *mut c_void,
                 1,
                 history_size as i32,
                 32_768,
             );
         });
 
-        CompletionHandle { ctx: self, rx }
+        CompletionHandle { rx }
+    }
+
+    pub fn start_completing_with<S>(
+        &mut self,
+        sampler: S,
+        max_predictions: usize,
+    ) -> CompletionHandle
+    where
+        S: Sampler + Send + Sync + 'static,
+    {
+        let (tx, rx) = flume::unbounded();
+        let history_size = self.inner.history_size.load(Ordering::SeqCst);
+        let session = self.clone();
+        // TODO deal with 0 history size
+        info!("Generating completions with {history_size} tokens of history");
+
+        thread::spawn(move || {
+            let context = session.inner.ctx.blocking_lock();
+            let vocab = session.model().vocabulary_size;
+            let end_of_stream = session.model().eos_token;
+            let mut count = 0;
+            let mut batch = Batch::new(1, 0, 1);
+            let mut i = session.inner.last_batch_size.load(Ordering::SeqCst);
+            let mut current_pos = history_size;
+
+            loop {
+                let mut candidates = unsafe {
+                    let logits = llama_get_logits_ith(context.ptr, (i - 1) as i32);
+
+                    let mut candidates = vec![];
+                    for id in 0..vocab {
+                        candidates.push(llama_token_data {
+                            id: id as i32,
+                            logit: *logits.add(id),
+                            p: 0.0,
+                        })
+                    }
+
+                    candidates
+                };
+
+                let candidates_p = llama_token_data_array {
+                    data: candidates.as_mut_ptr(),
+                    size: vocab,
+                    sorted: false,
+                };
+
+                let token = sampler.sample(context.ptr, candidates_p);
+
+                // TODO maybe not panic
+                // If there are no receivers, this thread should exit anyways
+                tx.send(token).unwrap();
+
+                if token == end_of_stream || max_predictions <= count {
+                    break;
+                }
+
+                batch.clear();
+                batch.add(token, current_pos, &[0], true);
+
+                let res = unsafe { llama_decode(context.ptr, batch.handle()) };
+
+                if res != 0 {
+                    // Should be fine to decode as this is running in another thread
+                    panic!("Failed to decode context")
+                }
+
+                count += 1;
+                i = batch.tokens();
+
+                session.inner.last_batch_size.store(i, Ordering::SeqCst);
+                current_pos = session.inner.history_size.fetch_add(i, Ordering::SeqCst);
+            }
+        });
+
+        CompletionHandle { rx }
     }
 
     /// Returns the model this session was created from.
@@ -682,77 +781,233 @@ impl LlamaSession {
     }
 }
 
-/// An intermediate token generated during an LLM completion.
-pub struct CompletionToken<'a> {
-    /// The session that generated this token.
-    ctx: &'a LlamaSession,
-
-    /// The generated token.
-    token: Token,
-}
-
-impl<'a> CompletionToken<'a> {
-    /// Decodes this token, returning the bytes it is composed of.
-    pub fn detokenize(&self) -> TinyVec<[u8; 8]> {
-        let model = self.ctx.model();
-
-        model.detokenize(self.token).into()
-    }
-
-    /// Returns this token as an `i32`.
-    pub fn id(&self) -> i32 {
-        self.token.0
-    }
-}
-
-impl<'a> AsRef<Token> for CompletionToken<'a> {
-    fn as_ref(&self) -> &Token {
-        &self.token
-    }
-}
-
-impl<'a, T: AsRef<Token>> PartialEq<T> for CompletionToken<'a> {
-    #[inline]
-    fn eq(&self, other: &T) -> bool {
-        self.token == *other.as_ref()
-    }
-}
-
-impl Eq for CompletionToken<'_> {}
-
 /// A handle (and channel) to an ongoing completion job on an off thread.
 ///
 /// If this structure is dropped, the off thread is stopped.
-pub struct CompletionHandle<'a> {
-    /// The session in charge of this completion.
-    ctx: &'a mut LlamaSession,
-
+pub struct CompletionHandle {
     /// The token receiver bound to the off thread.
     rx: flume::Receiver<Token>,
 }
 
-impl<'a> CompletionHandle<'a> {
+impl CompletionHandle {
     /// Blocks the current thread, resolving to the next completed token, or `None` if EOS is
     /// reached.
-    pub fn next_token(&mut self) -> Option<CompletionToken<'_>> {
-        self.rx.recv().ok().map(|token| CompletionToken {
-            ctx: self.ctx,
-            token,
-        })
+    pub fn next_token(&self) -> Option<Token> {
+        self.rx.recv().ok()
     }
 
     /// Asynchronously yields the current thread, resolving to the next completed token, or `None`
     /// if EOS is reached.
-    pub async fn next_token_async(&mut self) -> Option<CompletionToken<'_>> {
-        self.rx
-            .recv_async()
-            .await
-            .ok()
-            .map(|token| CompletionToken {
-                ctx: self.ctx,
-                token,
-            })
+    pub async fn next_token_async(&self) -> Option<Token> {
+        self.rx.recv_async().await.ok()
     }
+}
+
+pub struct LlamaParams {
+    /// number of layers to store in VRAM
+    pub n_gpu_layers: u32,
+
+    /// the GPU that is used for scratch and small tensors
+    pub main_gpu: u32,
+
+    /// how to split layers across multiple GPUs (size: LLAMA_MAX_DEVICES)
+    //const float * tensor_split, TODO
+
+    /// called with a progress value between 0 and 1, pass NULL to disable
+    //llama_progress_callback progress_callback, TODO
+
+    /// context pointer passed to the progress callback
+    //void * progress_callback_user_data, TODO
+
+    /// override key-value pairs of the model meta data
+    //const struct llama_model_kv_override * kv_overrides, TODO
+
+    /// only load the vocabulary, no weights
+    pub vocab_only: bool,
+
+    /// use mmap if possible
+    pub use_mmap: bool,
+
+    /// force system to keep model in RAM
+    pub use_mlock: bool,
+}
+
+impl Default for LlamaParams {
+    fn default() -> Self {
+        Self {
+            n_gpu_layers: 0,
+            main_gpu: 0,
+            vocab_only: false,
+            use_mmap: true,
+            use_mlock: false,
+        }
+    }
+}
+
+pub struct SessionParams {
+    /// RNG seed, [`u32::MAX`] for random
+    pub seed: u32,
+
+    /// text context, 0 = from model
+    pub n_ctx: u32,
+
+    /// prompt processing maximum batch size
+    pub n_batch: u32,
+
+    /// number of threads to use for generation
+    pub n_threads: u32,
+
+    /// number of threads to use for batch processing
+    pub n_threads_batch: u32,
+
+    /// RoPE scaling type, from [`llama_rope_scaling_type`]
+    pub rope_scaling_type: u8,
+
+    /// ref: https://github.com/ggerganov/llama.cpp/pull/2054
+
+    /// RoPE base frequency, 0 = from model
+    pub rope_freq_base: f32,
+
+    /// RoPE frequency scaling factor, 0 = from model
+    pub rope_freq_scale: f32,
+
+    /// YaRN extrapolation mix factor, negative = from model
+    pub yarn_ext_factor: f32,
+
+    /// YaRN magnitude scaling factor
+    pub yarn_attn_factor: f32,
+
+    /// YaRN low correction dim
+    pub yarn_beta_fast: f32,
+
+    /// YaRN high correction dim
+    pub yarn_beta_slow: f32,
+
+    /// YaRN original context size
+    pub yarn_orig_ctx: u32,
+
+    /// data type for K cache
+    //enum ggml_type type_k,  TODO
+    /// data type for V cache
+    //enum ggml_type type_v,  TODO
+
+    /// embedding mode only
+    pub embedding: bool,
+
+    /// whether to offload the KQV ops (including the KV cache) to GPU
+    pub offload_kqv: bool,
+}
+
+impl Default for SessionParams {
+    fn default() -> Self {
+        Self {
+            seed: u32::MAX,
+            n_ctx: 0,
+            n_batch: 0,
+            n_threads: std::thread::available_parallelism()
+                .unwrap_or(unsafe { NonZeroUsize::new_unchecked(1) })
+                .get() as u32,
+            n_threads_batch: std::thread::available_parallelism()
+                .unwrap_or(unsafe { NonZeroUsize::new_unchecked(1) })
+                .get() as u32,
+            rope_scaling_type: 0,
+            rope_freq_base: 0.0,
+            rope_freq_scale: 0.0,
+            yarn_ext_factor: 0.0,
+            yarn_attn_factor: 0.0,
+            yarn_beta_fast: 0.0,
+            yarn_beta_slow: 0.0,
+            yarn_orig_ctx: 0,
+            embedding: false,
+            offload_kqv: false,
+        }
+    }
+}
+
+struct Batch {
+    inner: llama_batch,
+    capacity: usize,
+    max_sequences: usize,
+}
+
+impl Batch {
+    fn new(capacity: usize, embed: usize, max_sequences: usize) -> Self {
+        // Ideally panic shouldn't be used, but this struct is only used inside this crate, so it
+        // should be fine.
+
+        if capacity == 0 {
+            panic!("Cannot create a batch with no capacity");
+        }
+        if max_sequences == 0 {
+            panic!("At least one sequence must be generated");
+        }
+
+        Self {
+            inner: unsafe { llama_batch_init(capacity as i32, embed as i32, max_sequences as i32) },
+            capacity,
+            max_sequences,
+        }
+    }
+
+    fn clear(&mut self) {
+        self.inner.n_tokens = 0;
+    }
+
+    fn add(&mut self, token: Token, position: usize, sequence_ids: &[i32], logits: bool) -> usize {
+        let i = self.inner.n_tokens as usize;
+
+        if i == self.capacity || self.max_sequences < sequence_ids.len() {
+            return usize::MAX;
+        }
+
+        unsafe {
+            // SAFETY: For all 0 < i < n_tokens, `llama_batch_init` created each of these
+            // offsets; although each offset may be currently uninitialized.
+            self.inner.token.add(i).write(token.0);
+            self.inner.pos.add(i).write(position as i32);
+            if logits {
+                self.inner.logits.add(i).write(1);
+            } else {
+                self.inner.logits.add(i).write(0);
+            }
+            self.inner.n_seq_id.add(i).write(sequence_ids.len() as i32);
+
+            let seq_ptr = *self.inner.seq_id.add(i);
+
+            if !seq_ptr.is_null() {
+                for id in 0..sequence_ids.len() {
+                    seq_ptr.add(id).write(id as i32);
+                }
+            }
+        }
+
+        self.inner.n_tokens += 1;
+        self.inner.n_tokens as usize - 1
+    }
+
+    fn set_logits(&mut self, idx: usize) {
+        unsafe {
+            self.inner.logits.add(idx).write(1);
+        }
+    }
+
+    fn tokens(&self) -> usize {
+        self.inner.n_tokens as usize
+    }
+
+    fn handle(&self) -> llama_batch {
+        self.inner
+    }
+}
+
+impl Drop for Batch {
+    fn drop(&mut self) {
+        unsafe { llama_batch_free(self.inner) }
+    }
+}
+
+pub trait Sampler {
+    fn sample(&self, context: *mut llama_context, candidates_p: llama_token_data_array) -> Token;
 }
 
 mod detail {

@@ -14,4 +14,26 @@ link-cplusplus = "1.0.9"
 
 [build-dependencies]
 bindgen = "0.69.1"
-cmake = "0.1.50"
+cc = { version = "1.0.83", features = ["parallel"] }
+once_cell = "1.19.0"
+
+[features]
+default = ["native"]
+native = ["avx", "avx2", "fma", "accel"]
+avx = []
+avx2 = []
+avx512 = []
+avx512_vmbi = []
+avx512_vnni = []
+fma = []
+f16c = [] # implied when compiled using MSVC with avx2/avx512
+accel = [] # Accelerate framework
+mpi = []
+cuda = []
+cuda_f16 = ["cuda"]
+cuda_dmmv = ["cuda"] # use dmmv instead of mmvq CUDA kernels
+cuda_mmq = ["cuda"] # use mmq kernels instead of cuBLAS
+metal = []
+blas = []
+hipblas = []
+clblast = []

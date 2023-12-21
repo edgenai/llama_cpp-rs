@@ -9,7 +9,6 @@ license = "MIT OR Apache-2.0"
 blake3 = "1.5.0"
 data-encoding = "2.4.0"
 directories = "5.0.1"
-llama_cpp = { path = "../llama_cpp" }
-llama_cpp_sys = { path = "../llama_cpp_sys" }
+llama_cpp = { path = "../llama_cpp", default-features = false, features = ["native"] }
 reqwest = "0.11.22"
 tokio = { version = "1.33.0", features = ["full"] }
