@@ -757,7 +757,9 @@ impl LlamaSession {
                 batch.clear();
                 batch.add(token, current_pos, &[0], true);
 
+                let start = std::time::Instant::now();
                 let res = unsafe { llama_decode(context.ptr, batch.handle()) };
+                println!("{} ms", start.elapsed().as_millis());
 
                 if res != 0 {
                     // Should be fine to decode as this is running in another thread
