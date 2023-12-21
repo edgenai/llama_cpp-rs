@@ -142,6 +142,7 @@ fn compile_ggml(cx: &mut Build, cx_flags: &str) {
         .file(LLAMA_PATH.join("ggml-quants.c"))
         .cpp(false)
         .define("_GNU_SOURCE", None)
+        .define("_XOPEN_SOURCE", "600")
         .define("GGML_USE_K_QUANTS", None)
         .compile("ggml");
 }
@@ -178,6 +179,8 @@ fn compile_llama(cxx: &mut Build, cxx_flags: &str, out_path: impl AsRef<Path>, g
     cxx.shared_flag(true)
         .file(LLAMA_PATH.join("llama.cpp"))
         .cpp(true)
+        .define("_GNU_SOURCE", None)
+        .define("_XOPEN_SOURCE", "600")
         .compile("binding");
 }
 
