@@ -8,6 +8,7 @@ repository = "https://github.com/binedge/llama_cpp-rs"
 license = "MIT OR Apache-2.0"
 readme = "../../README.md"
 publish = true
+links = "binding"
 
 [dependencies]
 link-cplusplus = { workspace = true }
