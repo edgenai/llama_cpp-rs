@@ -1,6 +1,6 @@
 [package]
 name = "llama_cpp"
-version = "0.3"
+version = "0.3.0"
 description = "High-level bindings to llama.cpp with a focus on just being really, really easy to use"
 edition = "2021"
 authors = ["Dakota Thompson <me@scriptis.net>", "Pedro Valente <pedro.amaral.valente@gmail.com>"]
