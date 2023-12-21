@@ -1,9 +1,9 @@
 [package]
 name = "llama_cpp_sys"
-version = "0.2.2"
+version = "0.3"
 description = "Automatically-generated bindings to llama.cpp's C API"
 edition = "2021"
-authors = ["Dakota Thompson <me@scriptis.net>"]
+authors = ["Dakota Thompson <me@scriptis.net>", "Pedro Valente <pedro.amaral.valente@gmail.com>"]
 repository = "https://github.com/binedge/llama_cpp-rs"
 license = "MIT OR Apache-2.0"
 readme = "../../README.md"
