@@ -141,6 +141,7 @@ fn compile_ggml(cx: &mut Build, cx_flags: &str) {
         .file(LLAMA_PATH.join("ggml-backend.c"))
         .file(LLAMA_PATH.join("ggml-quants.c"))
         .cpp(false)
+        .static_flag(true)
         .define("_GNU_SOURCE", None)
         .define("_XOPEN_SOURCE", "600")
         .define("GGML_USE_K_QUANTS", None)
@@ -165,26 +166,33 @@ fn compile_llama(cxx: &mut Build, cxx_flags: &str, out_path: impl AsRef<Path>, g
         cxx.flag(cxx_flag);
     }
 
-    let ggml_obj = out_path.as_ref().join("thirdparty/llama.cpp/ggml.o");
+    //let ggml_obj = out_path.as_ref().join("thirdparty/llama.cpp/ggml.o");
 
-    cxx.object(ggml_obj);
+    //cxx.object(ggml_obj);
 
-    if !ggml_type.is_empty() {
+    /*if !ggml_type.is_empty() {
         let ggml_feature_obj = out_path
             .as_ref()
             .join(format!("thirdparty/llama.cpp/ggml-{}.o", ggml_type));
         cxx.object(ggml_feature_obj);
-    }
+    }*/
 
-    cxx.shared_flag(true)
+    cxx.static_flag(true)
         .file(LLAMA_PATH.join("llama.cpp"))
         .cpp(true)
         .define("_GNU_SOURCE", None)
         .define("_XOPEN_SOURCE", "600")
-        .compile("binding");
+        .compile("llama");
 }
 
 fn main() {
+    if std::fs::read_dir(LLAMA_PATH.as_path()).is_err() {
+        panic!(
+            "Could not find {}. Did you forget to initialize submodules?",
+            LLAMA_PATH.to_string_lossy()
+        );
+    }
+
     let out_path = PathBuf::from(env::var("OUT_DIR").expect("No out dir found"));
 
     compile_bindings(&out_path);

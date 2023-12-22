@@ -16,8 +16,8 @@ derive_more = "0.99.17"
 directories = "5.0.1"
 flume = "0.11.0"
 link-cplusplus = "1.0.9"
-llama_cpp = "^0.3"
-llama_cpp_sys = "^0.3"
+llama_cpp = { path = "crates/llama_cpp" }
+llama_cpp_sys = { path = "crates/llama_cpp_sys" }
 num_cpus = "1.16.0"
 once_cell = "1.19.0"
 reqwest = "0.11.22"
@@ -25,7 +25,3 @@ thiserror = "1.0.50"
 tinyvec = "1.6.0"
 tokio = "1.33.0"
 tracing = "0.1.39"
-
-[patch.crates-io]
-llama_cpp = { path = "crates/llama_cpp" }
-llama_cpp_sys = { path = "crates/llama_cpp_sys" }
