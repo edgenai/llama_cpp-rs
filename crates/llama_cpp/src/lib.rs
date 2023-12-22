@@ -412,6 +412,7 @@ impl LlamaModel {
         params.seed = session_params.seed;
         params.n_threads = session_params.n_threads;
         params.n_threads_batch = session_params.n_threads_batch;
+        params.n_ctx = session_params.n_ctx;
 
         let ctx = unsafe {
             // SAFETY: due to `_model` being declared in the `LlamaContext`, `self` must live
@@ -757,9 +758,7 @@ impl LlamaSession {
                 batch.clear();
                 batch.add(token, current_pos, &[0], true);
 
-                let start = std::time::Instant::now();
                 let res = unsafe { llama_decode(context.ptr, batch.handle()) };
-                println!("{} ms", start.elapsed().as_millis());
 
                 if res != 0 {
                     // Should be fine to decode as this is running in another thread

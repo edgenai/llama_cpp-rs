@@ -66,7 +66,8 @@ mod tests {
                 .await
                 .unwrap();
 
-            let params = SessionParams::default();
+            let mut params = SessionParams::default();
+            params.n_ctx = 2048;
             let mut session = model.create_session(params);
 
             session
