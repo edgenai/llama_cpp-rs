@@ -1,5 +1,6 @@
 use std::env;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use cc::Build;
 use once_cell::sync::Lazy;
@@ -320,4 +321,32 @@ fn main() {
 
         compile_llama(&mut cxx, &cxx_flags, &out_path, &ggml_type);
     }
+
+    let lib_name = if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
+        "libllama.a"
+    } else {
+        "llama.lib"
+    };
+
+    let output = Command::new("nm")
+        .current_dir(&out_path)
+        .arg(lib_name)
+        .output()
+        .expect("Failed to acquire symbols from the compiled library.");
+    let out_str = String::from_utf8_lossy(output.stdout.as_slice());
+    let symbols = out_str.split('\n');
+
+    let mut cmd = Command::new("objcopy");
+    cmd.current_dir(out_path);
+    for symbol in symbols {
+        if !symbol.contains("U ggml") {
+            continue;
+        }
+
+        let formatted = symbol.trim_start_matches([' ', 'U']);
+        cmd.arg(format!("--localize-symbol={formatted}"));
+    }
+    cmd.arg(lib_name)
+        .status()
+        .expect("Failed to filter ggml symbols from library file.");
 }

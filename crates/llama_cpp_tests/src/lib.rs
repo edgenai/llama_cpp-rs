@@ -5,6 +5,8 @@
 
 #[cfg(test)]
 mod tests {
+    use std::io;
+    use std::io::Write;
     use std::time::Duration;
 
     use tokio::select;
@@ -83,8 +85,10 @@ mod tests {
                 .await
                 .unwrap();
 
-            let mut completions = session.start_completing_with(StandardSampler::default(), 1024);
+            let completions = session.start_completing_with(StandardSampler::default(), 1024);
             let timeout_by = Instant::now() + Duration::from_secs(500);
+
+            println!();
 
             loop {
                 select! {
@@ -93,13 +97,25 @@ mod tests {
                     }
                     completion = completions.next_token_async() => {
                         if let Some(token) = completion {
+                            if token == model.nl() {
+                                println!();
+                                continue;
+                            }
+                            if token == model.eos() {
+                                break;
+                            }
+
                             let s = String::from_utf8_lossy(model.detokenize(token));
-                            println!("{s}");
+                            let formatted = s.replace("▁", " ");
+                            print!("{formatted}");
+                            let _ = io::stdout().flush();
                         }
                         continue;
                     }
                 }
             }
+            println!();
+            println!();
         }
     }
 }
