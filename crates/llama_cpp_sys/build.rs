@@ -321,31 +321,57 @@ fn main() {
         compile_llama(&mut cxx, &cxx_flags, &out_path, &ggml_type);
     }
 
-    let lib_name = if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
-        "libllama.a"
+    let (ggml_lib_name, llama_lib_name) = if cfg!(target_os = "linux") || cfg!(target_os = "macos")
+    {
+        ("libggml.a", "libllama.a")
     } else {
-        "llama.lib"
+        ("ggml.lib", "llama.lib")
     };
 
     let output = Command::new("nm")
         .current_dir(&out_path)
-        .arg(lib_name)
+        .arg(llama_lib_name)
         .output()
         .expect("Failed to acquire symbols from the compiled library.");
     let out_str = String::from_utf8_lossy(output.stdout.as_slice());
     let symbols = out_str.split('\n');
 
     let mut cmd = Command::new("objcopy");
-    cmd.current_dir(out_path);
+    cmd.current_dir(&out_path);
     for symbol in symbols {
         if !symbol.contains("U ggml") {
             continue;
         }
 
         let formatted = symbol.trim_start_matches([' ', 'U']);
-        cmd.arg(format!("--localize-symbol={formatted}"));
+        cmd.arg(format!("--redefine-sym={formatted}=llama_{formatted}"));
     }
-    cmd.arg(lib_name)
+    cmd.arg(llama_lib_name)
         .status()
         .expect("Failed to filter ggml symbols from library file.");
+
+    // HELP
+
+    let output = Command::new("nm")
+        .current_dir(&out_path)
+        .arg(ggml_lib_name)
+        .output()
+        .expect("Failed to acquire symbols from the compiled library.");
+    let out_str = String::from_utf8_lossy(output.stdout.as_slice());
+    let symbols = out_str.split('\n');
+
+    let mut cmd = Command::new("objcopy");
+    cmd.current_dir(&out_path);
+    for symbol in symbols {
+        if !(symbol.contains("T ggml") || symbol.contains("t ggml")) {
+            continue;
+        }
+
+        let formatted = symbol.trim_start_matches([' ', 'T', 't', '0']);
+        println!("cargo:warning={formatted}");
+        cmd.arg(format!("--redefine-sym={formatted}=llama_{formatted}"));
+    }
+    cmd.arg(ggml_lib_name)
+        .status()
+        .expect("Failed to strip ggml unused library.");
 }
