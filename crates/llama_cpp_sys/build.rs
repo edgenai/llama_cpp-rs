@@ -324,6 +324,8 @@ fn main() {
     #[cfg(feature = "compat")]
     {
         // TODO this whole section is a bit hacky, could probably clean it up a bit, particularly the retrieval of symbols from the library files
+        // TODO windows support
+        // TODO do this for cuda if necessary
 
         let (ggml_lib_name, llama_lib_name) =
             if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
@@ -369,7 +371,7 @@ fn main() {
             .expect("Failed to modify global symbols from the ggml library.");
         if !status.success() {
             panic!(
-                "An error as occurred while modifying symbols from library file ({})",
+                "An error as occurred while modifying global symbols from library file ({})",
                 status
             );
         }
@@ -406,7 +408,7 @@ fn main() {
             .expect("Failed to modify ggml symbols from library file.");
         if !status.success() {
             panic!(
-                "An error as occurred while modifying symbols from library file ({})",
+                "An error has occurred while modifying ggml symbols from library file ({})",
                 status
             );
         }
