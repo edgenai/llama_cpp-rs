@@ -363,7 +363,13 @@ fn main() {
     let mut cmd = Command::new("objcopy");
     cmd.current_dir(&out_path);
     for symbol in symbols {
-        if !(symbol.contains("T ggml") || symbol.contains("t ggml")) {
+        if !(symbol.contains("T ggml")
+            || symbol.contains("t ggml")
+            || symbol.contains("t quantize")
+            || symbol.contains("T quantize")
+            || symbol.contains("t dequantize")
+            || symbol.contains("T dequantize"))
+        {
             continue;
         }
 
