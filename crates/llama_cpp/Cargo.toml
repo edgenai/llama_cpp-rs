@@ -13,7 +13,7 @@ publish = true
 ctor = { workspace = true }
 derive_more = { workspace = true }
 flume = { workspace = true }
-llama_cpp_sys = { workspace = true }
+llama_cpp_sys = { workspace = true, default-features = false }
 num_cpus = { workspace = true }
 thiserror = { workspace = true }
 tinyvec = { workspace = true, features = ["alloc"] }

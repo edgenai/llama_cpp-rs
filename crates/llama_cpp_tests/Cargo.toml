@@ -9,6 +9,6 @@ license = "MIT OR Apache-2.0"
 blake3 = { workspace = true }
 data-encoding = { workspace = true }
 directories = { workspace = true }
-llama_cpp = { workspace = true, default-features = false, features = ["native"] }
+llama_cpp = { workspace = true, features = ["native"] }
 reqwest = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
