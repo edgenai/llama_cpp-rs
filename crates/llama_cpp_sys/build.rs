@@ -339,7 +339,7 @@ fn main() {
     let mut cmd = Command::new("objcopy");
     cmd.current_dir(&out_path);
     for symbol in symbols {
-        if !symbol.contains("U ggml") {
+        if !(symbol.contains("U ggml") || symbol.contains("U gguf")) {
             continue;
         }
 
@@ -365,6 +365,8 @@ fn main() {
     for symbol in symbols {
         if !(symbol.contains("T ggml")
             || symbol.contains("t ggml")
+            || symbol.contains("t gguf")
+            || symbol.contains("T gguf")
             || symbol.contains("t quantize")
             || symbol.contains("T quantize")
             || symbol.contains("t dequantize")
@@ -374,7 +376,6 @@ fn main() {
         }
 
         let formatted = symbol.trim_start_matches([' ', 'T', 't', '0']);
-        println!("cargo:warning={formatted}");
         cmd.arg(format!("--redefine-sym={formatted}=llama_{formatted}"));
     }
     cmd.arg(ggml_lib_name)
