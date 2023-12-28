@@ -364,12 +364,9 @@ fn main() {
     cmd.current_dir(&out_path);
     for symbol in symbols {
         if !(symbol.contains("T ggml")
-            || symbol.contains("t ggml")
-            || symbol.contains("t gguf")
+            || symbol.contains("B ggml")
             || symbol.contains("T gguf")
-            || symbol.contains("t quantize")
             || symbol.contains("T quantize")
-            || symbol.contains("t dequantize")
             || symbol.contains("T dequantize"))
         {
             continue;
