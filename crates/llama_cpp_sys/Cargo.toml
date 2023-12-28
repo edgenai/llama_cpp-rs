@@ -19,7 +19,8 @@ cc = { workspace = true, features = ["parallel"] }
 once_cell = { workspace = true }
 
 [features]
-default = ["native"]
+default = ["compat", "native"]
+compat = [] # this feature modifies the symbols exposed by the generated libraries to avoid conflicts
 native = ["avx", "avx2", "fma", "f16c", "accel"]
 avx = []
 avx2 = []

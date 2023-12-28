@@ -321,61 +321,94 @@ fn main() {
         compile_llama(&mut cxx, &cxx_flags, &out_path, &ggml_type);
     }
 
-    let (ggml_lib_name, llama_lib_name) = if cfg!(target_os = "linux") || cfg!(target_os = "macos")
+    #[cfg(feature = "compat")]
     {
-        ("libggml.a", "libllama.a")
-    } else {
-        ("ggml.lib", "llama.lib")
-    };
+        // TODO this whole section is a bit hacky, could probably clean it up a bit, particularly the retrieval of symbols from the library files
 
-    let output = Command::new("nm")
-        .current_dir(&out_path)
-        .arg(llama_lib_name)
-        .output()
-        .expect("Failed to acquire symbols from the compiled library.");
-    let out_str = String::from_utf8_lossy(output.stdout.as_slice());
-    let symbols = out_str.split('\n');
+        let (ggml_lib_name, llama_lib_name) =
+            if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
+                ("libggml.a", "libllama.a")
+            } else {
+                ("ggml.lib", "llama.lib")
+            };
 
-    let mut cmd = Command::new("objcopy");
-    cmd.current_dir(&out_path);
-    for symbol in symbols {
-        if !(symbol.contains("U ggml") || symbol.contains("U gguf")) {
-            continue;
+        // Modifying symbols exposed by the ggml library
+
+        let output = Command::new("nm")
+            .current_dir(&out_path)
+            .arg(ggml_lib_name)
+            .output()
+            .expect("Failed to acquire symbols from the compiled library.");
+        if !output.status.success() {
+            panic!(
+                "An error has occurred while acquiring symbols from the compiled library ({})",
+                output.status
+            );
+        }
+        let out_str = String::from_utf8_lossy(output.stdout.as_slice());
+        let symbols = out_str.split('\n');
+
+        let mut cmd = Command::new("objcopy");
+        cmd.current_dir(&out_path);
+        for symbol in symbols {
+            if !(symbol.contains("T ggml")
+                || symbol.contains("B ggml")
+                || symbol.contains("T gguf")
+                || symbol.contains("T quantize")
+                || symbol.contains("T dequantize"))
+            {
+                continue;
+            }
+
+            let formatted = symbol.trim_start_matches([' ', 'T', 'B', '0']);
+            cmd.arg(format!("--redefine-sym={formatted}=llama_{formatted}"));
+        }
+        let status = cmd
+            .arg(ggml_lib_name)
+            .status()
+            .expect("Failed to modify global symbols from the ggml library.");
+        if !status.success() {
+            panic!(
+                "An error as occurred while modifying symbols from library file ({})",
+                status
+            );
         }
 
-        let formatted = symbol.trim_start_matches([' ', 'U']);
-        cmd.arg(format!("--redefine-sym={formatted}=llama_{formatted}"));
-    }
-    cmd.arg(llama_lib_name)
-        .status()
-        .expect("Failed to filter ggml symbols from library file.");
+        // Modifying the symbols llama depends on from ggml
 
-    // HELP
-
-    let output = Command::new("nm")
-        .current_dir(&out_path)
-        .arg(ggml_lib_name)
-        .output()
-        .expect("Failed to acquire symbols from the compiled library.");
-    let out_str = String::from_utf8_lossy(output.stdout.as_slice());
-    let symbols = out_str.split('\n');
-
-    let mut cmd = Command::new("objcopy");
-    cmd.current_dir(&out_path);
-    for symbol in symbols {
-        if !(symbol.contains("T ggml")
-            || symbol.contains("B ggml")
-            || symbol.contains("T gguf")
-            || symbol.contains("T quantize")
-            || symbol.contains("T dequantize"))
-        {
-            continue;
+        let output = Command::new("nm")
+            .current_dir(&out_path)
+            .arg(llama_lib_name)
+            .output()
+            .expect("Failed to acquire symbols from the compiled library.");
+        if !output.status.success() {
+            panic!(
+                "An error has occurred while acquiring symbols from the compiled library ({})",
+                output.status
+            );
         }
+        let out_str = String::from_utf8_lossy(output.stdout.as_slice());
+        let symbols = out_str.split('\n');
 
-        let formatted = symbol.trim_start_matches([' ', 'T', 'B', '0']);
-        cmd.arg(format!("--redefine-sym={formatted}=llama_{formatted}"));
+        let mut cmd = Command::new("objcopy");
+        cmd.current_dir(&out_path);
+        for symbol in symbols {
+            if !(symbol.contains("U ggml") || symbol.contains("U gguf")) {
+                continue;
+            }
+
+            let formatted = symbol.trim_start_matches([' ', 'U']);
+            cmd.arg(format!("--redefine-sym={formatted}=llama_{formatted}"));
+        }
+        let status = cmd
+            .arg(llama_lib_name)
+            .status()
+            .expect("Failed to modify ggml symbols from library file.");
+        if !status.success() {
+            panic!(
+                "An error as occurred while modifying symbols from library file ({})",
+                status
+            );
+        }
     }
-    cmd.arg(ggml_lib_name)
-        .status()
-        .expect("Failed to strip ggml unused library.");
 }
