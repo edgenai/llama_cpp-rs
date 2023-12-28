@@ -102,6 +102,9 @@ use llama_cpp_sys::{
 
 pub mod standard_sampler;
 
+/// Boolean indicating if a logger has already been set using [`llama_log_set`].
+static LOGGER_SET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// [ctor](https://docs.rs/ctor/latest/ctor/) wind-up binding to invoke llama.cpp's
 /// `llama_backend_init`, which is required before using the library.
 ///
@@ -112,12 +115,6 @@ fn llama_cpp_up() {
         // SAFETY: This is the only time that `llama_backend_init` is called. We always assume that
         // NUMA is available.
         llama_backend_init(true);
-    }
-
-    unsafe {
-        // SAFETY: `llama_backend_init` has already been called, so no logging will occur until
-        // after `main` has entered.
-        llama_log_set(Some(detail::llama_log_callback), ptr::null_mut());
     }
 }
 
@@ -130,6 +127,22 @@ fn llama_cpp_down() {
     unsafe {
         // SAFETY: This is the only time that `llama_backend_free` is called.
         llama_backend_free();
+    }
+}
+
+/// Sets the global [`llama.cpp`][llama.cpp] logger, if it wasn't set already.
+///
+/// The logger set by [`llama_log_set`] seems to reset itself when set inside [`llama_cpp_up`],
+/// which is why this function has to be called everytime a new model is loaded instead.
+///
+/// [llama.cpp]: https://github.com/ggerganov/llama.cpp/
+fn set_log() {
+    if !LOGGER_SET.swap(true, Ordering::SeqCst) {
+        unsafe {
+            // SAFETY: performs a simple assignment to static variables. Should only execute once
+            // before any logs are made.
+            llama_log_set(Some(detail::llama_log_callback), ptr::null_mut());
+        }
     }
 }
 
@@ -257,6 +270,8 @@ impl LlamaModel {
         file_path: impl AsRef<Path>,
         model_params: LlamaParams,
     ) -> Result<Self, LlamaLoadError> {
+        set_log();
+
         let file_path = file_path.as_ref();
 
         if !file_path.exists() {
