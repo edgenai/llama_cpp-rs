@@ -762,9 +762,14 @@ impl LlamaSession {
 
                 let token = sampler.sample(context.ptr, candidates_p);
 
-                // TODO maybe not panic
-                // If there are no receivers, this thread should exit anyways
-                tx.send(token).unwrap();
+                let _ = match tx.send(token) {
+                    Ok(_) => (),
+                    Err(e) => {
+                        info!("cannot send token: {:?}", e);
+                        break;
+                    },
+                };
+
 
                 if token == end_of_stream || max_predictions <= count {
                     break;
