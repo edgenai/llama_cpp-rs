@@ -76,7 +76,6 @@
 
 #![warn(missing_docs)]
 
-use std::borrow::Cow;
 use std::ffi::{c_void, CStr, CString};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -87,7 +86,7 @@ use ctor::{ctor, dtor};
 use derive_more::{Deref, DerefMut};
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock};
-use tracing::{error, warn, info, trace};
+use tracing::{error, info, trace, warn};
 
 use llama_cpp_sys::{
     llama_backend_free, llama_backend_init, llama_batch, llama_batch_free, llama_batch_init,
@@ -806,7 +805,7 @@ impl LlamaSession {
                     Err(e) => {
                         warn!("cannot send token: {}", e);
                         break;
-                    },
+                    }
                 };
 
                 if token == end_of_stream || max_predictions <= count {
