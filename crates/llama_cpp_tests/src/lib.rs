@@ -77,7 +77,7 @@ mod tests {
                 .await
                 .unwrap();
             session
-                .advance_context_async("<|USER|>Hello!")
+                .advance_context_async("<|USER|>How would you approach the trolley problem?")
                 .await
                 .unwrap();
             session
@@ -97,16 +97,11 @@ mod tests {
                     }
                     completion = completions.next_token_async() => {
                         if let Some(token) = completion {
-                            if token == model.nl() {
-                                println!();
-                                continue;
-                            }
                             if token == model.eos() {
                                 break;
                             }
 
-                            let s = String::from_utf8_lossy(model.detokenize(token));
-                            let formatted = s.replace("▁", " ");
+                            let formatted = model.token_to_piece(token);
                             print!("{formatted}");
                             let _ = io::stdout().flush();
                         }

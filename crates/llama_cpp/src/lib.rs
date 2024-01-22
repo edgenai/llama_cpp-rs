@@ -76,6 +76,7 @@
 
 #![warn(missing_docs)]
 
+use std::borrow::Cow;
 use std::ffi::{c_void, CStr, CString};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -95,7 +96,7 @@ use llama_cpp_sys::{
     llama_model_default_params, llama_n_vocab, llama_new_context_with_model, llama_token_bos,
     llama_token_data, llama_token_data_array, llama_token_eos, llama_token_eot,
     llama_token_get_text, llama_token_middle, llama_token_nl, llama_token_prefix,
-    llama_token_suffix, llama_tokenize,
+    llama_token_suffix, llama_token_to_piece, llama_tokenize,
 };
 
 /// The standard sampler implementation.
@@ -406,6 +407,44 @@ impl LlamaModel {
             ))
         }
         .to_bytes()
+    }
+
+    /// Converts the provided token into a [`String`] piece, using the model's vocabulary.
+    ///
+    /// Panics if the model is invalid.
+    pub fn token_to_piece(&self, token: Token) -> String {
+        let initial_size = 8u16;
+        let mut buffer = vec![std::os::raw::c_char::from(0); usize::from(initial_size)];
+        let size = unsafe {
+            llama_token_to_piece(
+                **self.model.try_read().unwrap(),
+                token.0,
+                buffer.as_mut_ptr(),
+                std::os::raw::c_int::from(initial_size),
+            )
+        };
+
+        buffer.resize(size.unsigned_abs() as usize + 1, 0);
+        if size < 0 {
+            let size = unsafe {
+                llama_token_to_piece(
+                    **self.model.try_read().unwrap(),
+                    token.0,
+                    buffer.as_mut_ptr(),
+                    std::os::raw::c_int::from(buffer.len() as i32 - 1),
+                )
+            };
+            assert_eq!(
+                size as usize + 1,
+                buffer.len(),
+                "Buffer length doesn't match"
+            );
+        }
+
+        let c_string = unsafe {
+            CString::from_vec_with_nul_unchecked(buffer.iter().map(move |x| *x as u8).collect())
+        };
+        c_string.to_string_lossy().to_string()
     }
 
     /// Creates a new evaluation context for this model.
