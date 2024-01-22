@@ -161,7 +161,7 @@ fn compile_metal(cx: &mut Build, cxx: &mut Build) {
         .file(LLAMA_PATH.join("ggml-metal.m"));
 }
 
-fn compile_llama(cxx: &mut Build, cxx_flags: &str, out_path: impl AsRef<Path>, ggml_type: &str) {
+fn compile_llama(cxx: &mut Build, cxx_flags: &str, _out_path: impl AsRef<Path>, _ggml_type: &str) {
     for cxx_flag in cxx_flags.split_whitespace() {
         cxx.flag(cxx_flag);
     }

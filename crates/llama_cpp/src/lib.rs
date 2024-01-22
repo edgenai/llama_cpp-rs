@@ -77,8 +77,6 @@
 #![warn(missing_docs)]
 
 use std::ffi::{c_void, CStr, CString};
-use std::num::NonZeroUsize;
-use std::ops::Add;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -88,7 +86,7 @@ use ctor::{ctor, dtor};
 use derive_more::{Deref, DerefMut};
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock};
-use tracing::{error, info, trace};
+use tracing::{error, warn, info, trace};
 
 use llama_cpp_sys::{
     llama_backend_free, llama_backend_init, llama_batch, llama_batch_free, llama_batch_init,
@@ -100,6 +98,7 @@ use llama_cpp_sys::{
     llama_token_suffix, llama_tokenize,
 };
 
+/// The standard sampler implementation.
 pub mod standard_sampler;
 
 /// Boolean indicating if a logger has already been set using [`llama_log_set`].
@@ -268,7 +267,7 @@ impl LlamaModel {
     /// [tracing]: https://docs.rs/tracing/latest/tracing/
     pub fn load_from_file(
         file_path: impl AsRef<Path>,
-        model_params: LlamaParams,
+        _model_params: LlamaParams,
     ) -> Result<Self, LlamaLoadError> {
         set_log();
 
@@ -278,7 +277,7 @@ impl LlamaModel {
             return Err(LlamaLoadError::DoesNotExist(file_path.into()));
         }
 
-        let mut params = unsafe { llama_model_default_params() };
+        let params = unsafe { llama_model_default_params() };
 
         // TODO create params from model_params
 
@@ -715,6 +714,7 @@ impl LlamaSession {
         CompletionHandle { rx }
     }
 
+    /// Start completion.
     pub fn start_completing_with<S>(
         &mut self,
         sampler: S,
@@ -765,11 +765,10 @@ impl LlamaSession {
                 let _ = match tx.send(token) {
                     Ok(_) => (),
                     Err(e) => {
-                        info!("cannot send token: {:?}", e);
+                        warn!("cannot send token: {}", e);
                         break;
                     },
                 };
-
 
                 if token == end_of_stream || max_predictions <= count {
                     break;
@@ -824,6 +823,7 @@ impl CompletionHandle {
     }
 }
 
+/// Parameters for llama.
 pub struct LlamaParams {
     /// number of layers to store in VRAM
     pub n_gpu_layers: u32,
@@ -865,6 +865,7 @@ impl Default for LlamaParams {
     }
 }
 
+/// Session-specific parameters.
 pub struct SessionParams {
     /// RNG seed, [`u32::MAX`] for random
     pub seed: u32,
@@ -1004,12 +1005,6 @@ impl Batch {
         self.inner.n_tokens as usize - 1
     }
 
-    fn set_logits(&mut self, idx: usize) {
-        unsafe {
-            self.inner.logits.add(idx).write(1);
-        }
-    }
-
     fn tokens(&self) -> usize {
         self.inner.n_tokens as usize
     }
@@ -1025,7 +1020,9 @@ impl Drop for Batch {
     }
 }
 
+/// This needs to be documented!
 pub trait Sampler {
+    /// This needs to be documented!
     fn sample(&self, context: *mut llama_context, candidates_p: llama_token_data_array) -> Token;
 }
 

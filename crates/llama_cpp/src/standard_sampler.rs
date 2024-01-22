@@ -9,6 +9,7 @@ use llama_cpp_sys::{
 
 use crate::{Sampler, Token};
 
+/// The standard sampler.
 pub struct StandardSampler {
     /// number of previous tokens to remember
     pub n_prev: i32,
