@@ -210,6 +210,9 @@ fn main() {
         cxx_flags.push_str(" /W4 /Wall /wd4820 /wd4710 /wd4711 /wd4820 /wd4514");
     }
 
+    // TODO in llama.cpp's cmake (https://github.com/ggerganov/llama.cpp/blob/9ecdd12e95aee20d6dfaf5f5a0f0ce5ac1fb2747/CMakeLists.txt#L659), they include SIMD instructions manually, however it doesn't seem to be necessary for VS2022's MSVC, check when it is needed
+    // TODO add missing windows feature support
+
     #[cfg(feature = "native")]
     {
         if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
@@ -239,6 +242,9 @@ fn main() {
         if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
             cx_flags.push_str(" -mavx");
             cxx_flags.push_str(" -mavx");
+        } else if !(cfg!(feature = "avx2") || cfg!(feature = "avx512")) {
+            cx_flags.push_str(" /arch:AVX");
+            cxx_flags.push_str(" /arch:AVX");
         }
     }
 
@@ -247,6 +253,9 @@ fn main() {
         if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
             cx_flags.push_str(" -mavx2");
             cxx_flags.push_str(" -mavx2");
+        } else if !cfg!(feature = "avx512") {
+            cx_flags.push_str(" /arch:AVX2");
+            cxx_flags.push_str(" /arch:AVX2");
         }
     }
 
@@ -324,19 +333,18 @@ fn main() {
     #[cfg(feature = "compat")]
     {
         // TODO this whole section is a bit hacky, could probably clean it up a bit, particularly the retrieval of symbols from the library files
-        // TODO windows support
         // TODO do this for cuda if necessary
 
-        let (ggml_lib_name, llama_lib_name) =
+        let (ggml_lib_name, llama_lib_name, nm_name, objcopy_name) =
             if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
-                ("libggml.a", "libllama.a")
+                ("libggml.a", "libllama.a", "nm", "objcopy")
             } else {
-                ("ggml.lib", "llama.lib")
+                ("ggml.lib", "llama.lib", "llvm-nm", "llvm-objcopy")
             };
 
         // Modifying symbols exposed by the ggml library
 
-        let output = Command::new("nm")
+        let output = Command::new(nm_name)
             .current_dir(&out_path)
             .arg(ggml_lib_name)
             .output()
@@ -350,7 +358,7 @@ fn main() {
         let out_str = String::from_utf8_lossy(output.stdout.as_slice());
         let symbols = out_str.split('\n');
 
-        let mut cmd = Command::new("objcopy");
+        let mut cmd = Command::new(objcopy_name);
         cmd.current_dir(&out_path);
         for symbol in symbols {
             if !(symbol.contains("T ggml")
@@ -378,7 +386,7 @@ fn main() {
 
         // Modifying the symbols llama depends on from ggml
 
-        let output = Command::new("nm")
+        let output = Command::new(nm_name)
             .current_dir(&out_path)
             .arg(llama_lib_name)
             .output()
@@ -392,7 +400,7 @@ fn main() {
         let out_str = String::from_utf8_lossy(output.stdout.as_slice());
         let symbols = out_str.split('\n');
 
-        let mut cmd = Command::new("objcopy");
+        let mut cmd = Command::new(objcopy_name);
         cmd.current_dir(&out_path);
         for symbol in symbols {
             if !(symbol.contains("U ggml") || symbol.contains("U gguf")) {
