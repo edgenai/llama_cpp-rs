@@ -370,7 +370,7 @@ fn main() {
                 continue;
             }
 
-            let formatted = symbol.trim_start_matches([' ', 'T', 'B', '0']);
+            let formatted = &symbol[11..];
             cmd.arg(format!("--redefine-sym={formatted}=llama_{formatted}"));
         }
         let status = cmd
@@ -407,7 +407,7 @@ fn main() {
                 continue;
             }
 
-            let formatted = symbol.trim_start_matches([' ', 'U']);
+            let formatted = &symbol[11..];
             cmd.arg(format!("--redefine-sym={formatted}=llama_{formatted}"));
         }
         let status = cmd
