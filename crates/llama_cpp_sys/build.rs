@@ -1,5 +1,8 @@
+#[cfg(feature = "compat")]
+use std::borrow::Cow;
 use std::env;
 use std::path::{Path, PathBuf};
+#[cfg(feature = "compat")]
 use std::process::Command;
 
 use cc::Build;
@@ -347,6 +350,7 @@ fn main() {
         let output = Command::new(nm_name)
             .current_dir(&out_path)
             .arg(ggml_lib_name)
+            .args(["-p", "-P"])
             .output()
             .expect("Failed to acquire symbols from the compiled library.");
         if !output.status.success() {
@@ -356,22 +360,36 @@ fn main() {
             );
         }
         let out_str = String::from_utf8_lossy(output.stdout.as_slice());
-        let symbols = out_str.split('\n');
+        let symbols = get_symbols(
+            &out_str,
+            [
+                Filter {
+                    prefix: "ggml",
+                    sym_type: 'T',
+                },
+                Filter {
+                    prefix: "ggml",
+                    sym_type: 'B',
+                },
+                Filter {
+                    prefix: "gguf",
+                    sym_type: 'T',
+                },
+                Filter {
+                    prefix: "quantize",
+                    sym_type: 'T',
+                },
+                Filter {
+                    prefix: "dequantize",
+                    sym_type: 'T',
+                },
+            ],
+        );
 
         let mut cmd = Command::new(objcopy_name);
         cmd.current_dir(&out_path);
         for symbol in symbols {
-            if !(symbol.contains("T ggml")
-                || symbol.contains("B ggml")
-                || symbol.contains("T gguf")
-                || symbol.contains("T quantize")
-                || symbol.contains("T dequantize"))
-            {
-                continue;
-            }
-
-            let formatted = &symbol[11..];
-            cmd.arg(format!("--redefine-sym={formatted}=llama_{formatted}"));
+            cmd.arg(format!("--redefine-sym={symbol}=llama_{symbol}"));
         }
         let status = cmd
             .arg(ggml_lib_name)
@@ -389,6 +407,7 @@ fn main() {
         let output = Command::new(nm_name)
             .current_dir(&out_path)
             .arg(llama_lib_name)
+            .args(["-p", "-P"])
             .output()
             .expect("Failed to acquire symbols from the compiled library.");
         if !output.status.success() {
@@ -398,17 +417,24 @@ fn main() {
             );
         }
         let out_str = String::from_utf8_lossy(output.stdout.as_slice());
-        let symbols = out_str.split('\n');
+        let symbols = get_symbols(
+            &out_str,
+            [
+                Filter {
+                    prefix: "ggml",
+                    sym_type: 'U',
+                },
+                Filter {
+                    prefix: "gguf",
+                    sym_type: 'U',
+                },
+            ],
+        );
 
         let mut cmd = Command::new(objcopy_name);
         cmd.current_dir(&out_path);
         for symbol in symbols {
-            if !(symbol.contains("U ggml") || symbol.contains("U gguf")) {
-                continue;
-            }
-
-            let formatted = &symbol[11..];
-            cmd.arg(format!("--redefine-sym={formatted}=llama_{formatted}"));
+            cmd.arg(format!("--redefine-sym={symbol}=llama_{symbol}"));
         }
         let status = cmd
             .arg(llama_lib_name)
@@ -421,4 +447,45 @@ fn main() {
             );
         }
     }
+}
+
+#[cfg(feature = "compat")]
+struct Filter<'a> {
+    prefix: &'a str,
+    sym_type: char,
+}
+
+/// Helper function to turn **`nm`**'s output into an iterator of [`str`] symbols.
+///
+/// This function expects **`nm`** to be called using the **`-p`** and **`-P`** flags.
+#[cfg(feature = "compat")]
+fn get_symbols<'a, const N: usize>(
+    nm_output: &'a Cow<str>,
+    filters: [Filter<'a>; N],
+) -> impl Iterator<Item = &'a str> + 'a {
+    nm_output
+        .lines()
+        .map(|symbol| {
+            // Strip irrelevant information
+
+            let mut stripped = symbol;
+            while stripped.split(' ').count() > 2 {
+                let idx = unsafe { stripped.rfind(' ').unwrap_unchecked() };
+                stripped = &stripped[..idx]
+            }
+            stripped
+        })
+        .filter(move |symbol| {
+            // Filter matching symbols
+
+            if symbol.split(' ').count() == 2 {
+                for filter in &filters {
+                    if symbol.ends_with(filter.sym_type) && symbol.starts_with(filter.prefix) {
+                        return true;
+                    }
+                }
+            }
+            false
+        })
+        .map(|symbol| &symbol[..symbol.len() - 2]) // Strip the type, so only the symbol remains
 }

@@ -6,9 +6,5 @@ publish = false
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-blake3 = { workspace = true }
-data-encoding = { workspace = true }
-directories = { workspace = true }
-llama_cpp = { workspace = true, features = ["native"] }
-reqwest = { workspace = true }
+llama_cpp = { workspace = true, features = ["native", "compat"] }
 tokio = { workspace = true, features = ["full"] }
