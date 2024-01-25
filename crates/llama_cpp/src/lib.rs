@@ -456,6 +456,7 @@ impl LlamaModel {
     /// the model weights and 100MiB for each session.
     pub fn create_session(&self, session_params: SessionParams) -> LlamaSession {
         let params = llama_context_params::from(session_params);
+        let max_batch = params.n_batch;
 
         let ctx = unsafe {
             // SAFETY: due to `_model` being declared in the `LlamaContext`, `self` must live
@@ -469,6 +470,7 @@ impl LlamaModel {
                 ctx: Mutex::new(LlamaContextInner { ptr: ctx }),
                 history_size: AtomicUsize::new(0),
                 last_batch_size: AtomicUsize::new(0),
+                max_batch,
             }),
         }
     }
@@ -553,6 +555,9 @@ struct LlamaSessionInner {
 
     /// The number of tokens present in this model's context.
     last_batch_size: AtomicUsize,
+
+    /// Max batch size.
+    max_batch: u32,
 }
 
 /// An error raised while advancing the context in a [`LlamaSession`].
@@ -603,6 +608,12 @@ impl LlamaSession {
                 provided_tokens: n_tokens,
                 max_tokens: i32::MAX as usize,
             });
+        }
+
+        info!("Advancing context with {n_tokens} tokens");
+
+        if n_tokens < self.inner.max_batch as usize {
+            panic!("Number of tokens exceeds the maximum batch size for this session")
         }
 
         let mut batch = unsafe {
@@ -794,7 +805,9 @@ impl LlamaSession {
                 match tx.send(token) {
                     Ok(_) => (),
                     Err(e) => {
-                        warn!("Cannot send token: {}", e);
+                        let token_str =
+                            String::from_utf8_lossy(session.inner.model.detokenize(e.0));
+                        warn!("Cannot send token ({}): {}", token_str, e);
                         break;
                     }
                 };
@@ -1027,7 +1040,11 @@ struct Batch {
     /// [llama_seq_id]: llama_cpp_sys::llama_seq_id
     /// [llama_pos]: llama_cpp_sys::llama_pos
     inner: llama_batch,
+
+    /// The maximum number of tokens this batch can have.
     capacity: usize,
+
+    /// The maximum number of sequences that can be generated for this batch.
     max_sequences: usize,
 }
 
