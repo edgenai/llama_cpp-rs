@@ -612,7 +612,7 @@ impl LlamaSession {
 
         info!("Advancing context with {n_tokens} tokens");
 
-        if n_tokens < self.inner.max_batch as usize {
+        if n_tokens > self.inner.max_batch as usize {
             panic!("Number of tokens exceeds the maximum batch size for this session")
         }
 
