@@ -1,5 +1,3 @@
-#[cfg(feature = "compat")]
-use std::borrow::Cow;
 use std::env;
 use std::path::{Path, PathBuf};
 #[cfg(feature = "compat")]
@@ -449,6 +447,7 @@ fn main() {
     }
 }
 
+/// A filter for a symbol in a library.
 #[cfg(feature = "compat")]
 struct Filter<'a> {
     prefix: &'a str,
@@ -460,7 +459,7 @@ struct Filter<'a> {
 /// This function expects **`nm`** to be called using the **`-p`** and **`-P`** flags.
 #[cfg(feature = "compat")]
 fn get_symbols<'a, const N: usize>(
-    nm_output: &'a Cow<str>,
+    nm_output: &'a str,
     filters: [Filter<'a>; N],
 ) -> impl Iterator<Item = &'a str> + 'a {
     nm_output

@@ -90,12 +90,12 @@ use tracing::{error, info, trace, warn};
 
 use llama_cpp_sys::{
     llama_backend_free, llama_backend_init, llama_batch, llama_batch_free, llama_batch_init,
-    llama_beam_search, llama_context, llama_context_default_params, llama_decode, llama_free,
-    llama_free_model, llama_get_logits_ith, llama_load_model_from_file, llama_log_set, llama_model,
-    llama_model_default_params, llama_n_vocab, llama_new_context_with_model, llama_token_bos,
-    llama_token_data, llama_token_data_array, llama_token_eos, llama_token_eot,
-    llama_token_get_text, llama_token_middle, llama_token_nl, llama_token_prefix,
-    llama_token_suffix, llama_token_to_piece, llama_tokenize,
+    llama_beam_search, llama_context, llama_context_default_params, llama_context_params,
+    llama_decode, llama_free, llama_free_model, llama_get_logits_ith, llama_load_model_from_file,
+    llama_log_set, llama_model, llama_model_default_params, llama_n_vocab,
+    llama_new_context_with_model, llama_token_bos, llama_token_data, llama_token_data_array,
+    llama_token_eos, llama_token_eot, llama_token_get_text, llama_token_middle, llama_token_nl,
+    llama_token_prefix, llama_token_suffix, llama_token_to_piece, llama_tokenize,
 };
 
 /// The standard sampler implementation.
@@ -455,16 +455,7 @@ impl LlamaModel {
     /// smaller state belonging to each context. For Zephyr 7B, this works out to about 4GiB for
     /// the model weights and 100MiB for each session.
     pub fn create_session(&self, session_params: SessionParams) -> LlamaSession {
-        let mut params = unsafe {
-            // SAFETY: Stack constructor; always safe.
-            llama_context_default_params()
-        };
-
-        // TODO refactor this
-        params.seed = session_params.seed;
-        params.n_threads = session_params.n_threads;
-        params.n_threads_batch = session_params.n_threads_batch;
-        params.n_ctx = session_params.n_ctx;
+        let params = llama_context_params::from(session_params);
 
         let ctx = unsafe {
             // SAFETY: due to `_model` being declared in the `LlamaContext`, `self` must live
@@ -800,10 +791,10 @@ impl LlamaSession {
 
                 let token = sampler.sample(context.ptr, candidates_p);
 
-                let _ = match tx.send(token) {
+                match tx.send(token) {
                     Ok(_) => (),
                     Err(e) => {
-                        warn!("cannot send token: {}", e);
+                        warn!("Cannot send token: {}", e);
                         break;
                     }
                 };
@@ -905,7 +896,7 @@ impl Default for LlamaParams {
 
 /// Session-specific parameters.
 pub struct SessionParams {
-    /// RNG seed, [`u32::MAX`] for random
+    /// RNG seed, [`u32::MAX`] for random (default)
     pub seed: u32,
 
     /// text context, 0 = from model
@@ -921,7 +912,7 @@ pub struct SessionParams {
     pub n_threads_batch: u32,
 
     /// RoPE scaling type, from [`llama_rope_scaling_type`]
-    pub rope_scaling_type: u8,
+    pub rope_scaling_type: i8,
 
     /// ref: https://github.com/ggerganov/llama.cpp/pull/2054
 
@@ -947,9 +938,10 @@ pub struct SessionParams {
     pub yarn_orig_ctx: u32,
 
     /// data type for K cache
-    //enum ggml_type type_k,  TODO
+    pub type_k: u32,
+
     /// data type for V cache
-    //enum ggml_type type_v,  TODO
+    pub type_v: u32,
 
     /// embedding mode only
     pub embedding: bool,
@@ -960,29 +952,80 @@ pub struct SessionParams {
 
 impl Default for SessionParams {
     fn default() -> Self {
+        let c_defaults = unsafe {
+            // SAFETY: Stack constructor, always safe.
+            llama_context_default_params()
+        };
+
         let threads = num_cpus::get_physical() as u32;
 
         Self {
-            seed: u32::MAX,
-            n_ctx: 0,
-            n_batch: 0,
+            seed: c_defaults.seed,
+            n_ctx: c_defaults.n_ctx,
+            n_batch: c_defaults.n_batch,
             n_threads: threads,
             n_threads_batch: threads,
-            rope_scaling_type: 0,
-            rope_freq_base: 0.0,
-            rope_freq_scale: 0.0,
-            yarn_ext_factor: 0.0,
-            yarn_attn_factor: 0.0,
-            yarn_beta_fast: 0.0,
-            yarn_beta_slow: 0.0,
-            yarn_orig_ctx: 0,
-            embedding: false,
-            offload_kqv: false,
+            rope_scaling_type: c_defaults.rope_scaling_type,
+            rope_freq_base: c_defaults.rope_freq_base,
+            rope_freq_scale: c_defaults.rope_freq_scale,
+            yarn_ext_factor: c_defaults.yarn_ext_factor,
+            yarn_attn_factor: c_defaults.yarn_attn_factor,
+            yarn_beta_fast: c_defaults.yarn_beta_fast,
+            yarn_beta_slow: c_defaults.yarn_beta_slow,
+            yarn_orig_ctx: c_defaults.yarn_orig_ctx,
+            type_k: c_defaults.type_k as u32,
+            type_v: c_defaults.type_v as u32,
+            embedding: c_defaults.embedding,
+            offload_kqv: c_defaults.offload_kqv,
         }
     }
 }
 
+impl From<SessionParams> for llama_context_params {
+    fn from(value: SessionParams) -> Self {
+        Self {
+            seed: value.seed,
+            n_ctx: value.n_ctx,
+            n_batch: value.n_batch,
+            n_threads: value.n_threads,
+            n_threads_batch: value.n_threads_batch,
+            rope_scaling_type: value.rope_scaling_type,
+            rope_freq_base: value.rope_freq_base,
+            rope_freq_scale: value.rope_freq_scale,
+            yarn_ext_factor: value.yarn_ext_factor,
+            yarn_attn_factor: value.yarn_attn_factor,
+            yarn_beta_fast: value.yarn_beta_fast,
+            yarn_beta_slow: value.yarn_beta_slow,
+            yarn_orig_ctx: value.yarn_orig_ctx,
+            cb_eval: None,
+            cb_eval_user_data: std::ptr::null_mut(),
+            type_k: value.type_k as std::os::raw::c_int,
+            type_v: value.type_v as std::os::raw::c_int,
+            mul_mat_q: true,   // Deprecated
+            logits_all: false, // Deprecated
+            embedding: value.embedding,
+            offload_kqv: value.offload_kqv,
+        }
+    }
+}
+
+/// A safe wrapper around a [`llama_batch`].
 struct Batch {
+    /// ## Members
+    /// * `n_tokens`: [`i32`] - The number of tokens
+    /// * `tokens`: `*mut` [`llama_token`][llama_token] - The number of tokens
+    /// * `embd`: `*mut` [`f32`] - The number of tokens
+    /// * `pos`: `*mut` [`llama_pos`][llama_pos] - The number of tokens
+    /// * `n_seq_id`: `*mut` [`i32`] - The number of tokens
+    /// * `seq_id`: `*mut *mut` [`llama_seq_id`][llama_seq_id] - The number of tokens
+    /// * `logits`: `*mut` [`i8`] - The number of tokens
+    /// * `all_pos_0`: [`llama_pos`][llama_pos] - The number of tokens
+    /// * `all_pos_1`: [`llama_pos`][llama_pos] - The number of tokens
+    /// * `all_seq_id`: [`llama_seq_id`][llama_seq_id] - The number of tokens
+    ///
+    /// [llama_token]: llama_cpp_sys::llama_token
+    /// [llama_seq_id]: llama_cpp_sys::llama_seq_id
+    /// [llama_pos]: llama_cpp_sys::llama_pos
     inner: llama_batch,
     capacity: usize,
     max_sequences: usize,
@@ -1040,6 +1083,7 @@ impl Batch {
         }
 
         self.inner.n_tokens += 1;
+        //println!("{}", self.inner.n_tokens);
         self.inner.n_tokens as usize - 1
     }
 
