@@ -90,13 +90,14 @@ use tokio::sync::{Mutex, RwLock};
 use tracing::{error, info, trace, warn};
 
 use llama_cpp_sys::{
-    llama_backend_free, llama_backend_init, llama_batch, llama_batch_free, llama_batch_init,
-    llama_beam_search, llama_context, llama_context_default_params, llama_context_params,
-    llama_decode, llama_free, llama_free_model, llama_get_logits_ith, llama_load_model_from_file,
-    llama_log_set, llama_model, llama_model_default_params, llama_n_vocab,
-    llama_new_context_with_model, llama_token_bos, llama_token_data, llama_token_data_array,
-    llama_token_eos, llama_token_eot, llama_token_get_text, llama_token_middle, llama_token_nl,
-    llama_token_prefix, llama_token_suffix, llama_token_to_piece, llama_tokenize,
+    ggml_type, llama_backend_free, llama_backend_init, llama_batch, llama_batch_free,
+    llama_batch_init, llama_beam_search, llama_context, llama_context_default_params,
+    llama_context_params, llama_decode, llama_free, llama_free_model, llama_get_logits_ith,
+    llama_load_model_from_file, llama_log_set, llama_model, llama_model_default_params,
+    llama_n_vocab, llama_new_context_with_model, llama_token_bos, llama_token_data,
+    llama_token_data_array, llama_token_eos, llama_token_eot, llama_token_get_text,
+    llama_token_middle, llama_token_nl, llama_token_prefix, llama_token_suffix,
+    llama_token_to_piece, llama_tokenize,
 };
 
 /// The standard sampler implementation.
@@ -1000,8 +1001,8 @@ impl From<SessionParams> for llama_context_params {
             yarn_orig_ctx: value.yarn_orig_ctx,
             cb_eval: None,
             cb_eval_user_data: std::ptr::null_mut(),
-            type_k: value.type_k as std::os::raw::c_int,
-            type_v: value.type_v as std::os::raw::c_int,
+            type_k: value.type_k as ggml_type,
+            type_v: value.type_v as ggml_type,
             mul_mat_q: true,   // Deprecated
             logits_all: false, // Deprecated
             embedding: value.embedding,
