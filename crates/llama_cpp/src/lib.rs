@@ -1211,6 +1211,17 @@ mod detail {
         };
         let text = String::from_utf8_lossy(text.to_bytes());
 
+        // TODO check if this happens due to some bug
+        if text.len() < 2 {
+            return;
+        }
+
+        let text = if let Some(stripped) = text.strip_suffix('\n') {
+            stripped
+        } else {
+            text.as_ref()
+        };
+
         match level {
             ggml_log_level_GGML_LOG_LEVEL_ERROR => error!("ggml: {text}"),
             ggml_log_level_GGML_LOG_LEVEL_INFO => info!("ggml: {text}"),
