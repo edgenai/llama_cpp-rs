@@ -76,6 +76,7 @@
 
 #![warn(missing_docs)]
 
+use std::cmp::min;
 use std::ffi::{c_void, CStr, CString};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -612,68 +613,55 @@ impl LlamaSession {
 
         info!("Advancing context with {n_tokens} tokens");
 
-        if n_tokens > self.inner.max_batch as usize {
-            panic!("Number of tokens exceeds the maximum batch size for this session")
+        let batch_size = min(n_tokens, self.inner.max_batch as usize);
+        let sequences = tokens.chunks(batch_size);
+
+        if n_tokens > batch_size {
+            info!("Number of tokens exceeds the maximum batch size ({}) for this session, splitting the input", self.inner.max_batch);
         }
 
-        let mut batch = unsafe {
-            // SAFETY: `llama_batch_init` is a stack constructor, and should never fail.
-            llama_batch_init(n_tokens as i32, 0, 1)
-        };
+        let mut batch = Batch::new(batch_size, 0, 1);
+        let history_size = self.inner.history_size.load(Ordering::SeqCst);
+        let mut local_history = 0;
+        let mut last_batch_size = self.inner.last_batch_size.load(Ordering::SeqCst);
 
-        batch.n_tokens = n_tokens as i32;
-        let current_history = self.inner.history_size.load(Ordering::SeqCst);
+        for sequence in sequences {
+            batch.clear();
 
-        for (i, token) in tokens.iter().enumerate() {
-            trace!("Writing token {i} of {n_tokens} ({token:?})");
-
-            unsafe {
-                // SAFETY: For all 0 < i < n_tokens, `llama_batch_init` created each of these
-                // offsets; although each offset may be currently uninitialized.
-                batch.token.add(i).write(token.0);
-                batch.pos.add(i).write((current_history + i) as i32);
-                batch.logits.add(i).write(0);
-                batch.n_seq_id.add(i).write(1);
-
-                let seq_ptr = batch.seq_id.add(i);
-
-                if !seq_ptr.is_null() {
-                    **seq_ptr = 0;
-                }
+            for token in sequence {
+                batch.add(*token, history_size + local_history, &[0], false);
+                local_history += 1;
             }
+
+            // Set the logits of the very last token
+            if local_history == n_tokens {
+                batch.set_logits(sequence.len() - 1, true);
+            }
+
+            trace!("Wrote {n_tokens} tokens to the token buffer");
+            trace!("Starting LLaMA decode for batch");
+
+            if unsafe {
+                // SAFETY: `llama_decode` will not fail for a valid `batch`, which we correctly
+                // initialized above.
+                llama_decode(self.inner.ctx.blocking_lock().ptr, batch.handle())
+            } != 0
+            {
+                return Err(LlamaInternalError.into());
+            } else {
+                trace!("Batch decode completed successfully");
+            }
+
+            last_batch_size = sequence.len();
         }
-
-        unsafe {
-            // SAFETY: `batch.logits[n_tokens - 1]` exists, for the same reasons outlined above.
-            batch.logits.add(n_tokens - 1).write(1);
-        }
-
-        trace!("Wrote {n_tokens} tokens to the token buffer");
-        trace!("Starting LLaMA decode for batch");
-
-        if unsafe {
-            // SAFETY: `llama_decode` will not fail for a valid `batch`, which we correctly
-            // initialized above.
-            llama_decode(self.inner.ctx.blocking_lock().ptr, batch)
-        } != 0
-        {
-            return Err(LlamaInternalError.into());
-        } else {
-            trace!("Batch decode completed successfully");
-        }
-
-        trace!("Freeing batch");
-
-        unsafe {
-            // SAFETY: This is the last time we use `batch`, which is still currently initialized.
-            llama_batch_free(batch)
-        };
 
         self.inner
             .history_size
-            .fetch_add(n_tokens, Ordering::SeqCst);
+            .fetch_add(local_history, Ordering::SeqCst);
 
-        self.inner.last_batch_size.store(n_tokens, Ordering::SeqCst);
+        self.inner
+            .last_batch_size
+            .store(last_batch_size, Ordering::SeqCst);
 
         Ok(())
     }
@@ -822,8 +810,8 @@ impl LlamaSession {
                 let res = unsafe { llama_decode(context.ptr, batch.handle()) };
 
                 if res != 0 {
-                    // Should be fine to decode as this is running in another thread
-                    panic!("Failed to decode context")
+                    error!("Failed to decode context ({res})");
+                    break;
                 }
 
                 count += 1;
@@ -1024,6 +1012,7 @@ impl From<SessionParams> for llama_context_params {
 
 /// A safe wrapper around a [`llama_batch`].
 struct Batch {
+    // TODO
     /// ## Members
     /// * `n_tokens`: [`i32`] - The number of tokens
     /// * `tokens`: `*mut` [`llama_token`][llama_token] - The number of tokens
@@ -1072,6 +1061,12 @@ impl Batch {
     }
 
     fn add(&mut self, token: Token, position: usize, sequence_ids: &[i32], logits: bool) -> usize {
+        trace!(
+            "Writing token {} of {} ({token:?})",
+            self.inner.n_tokens,
+            self.capacity
+        );
+
         let i = self.inner.n_tokens as usize;
 
         if i == self.capacity || self.max_sequences < sequence_ids.len() {
@@ -1100,8 +1095,19 @@ impl Batch {
         }
 
         self.inner.n_tokens += 1;
-        //println!("{}", self.inner.n_tokens);
         self.inner.n_tokens as usize - 1
+    }
+
+    fn set_logits(&self, idx: usize, value: bool) {
+        assert!(idx < self.inner.n_tokens as usize, "Index out of bounds");
+
+        unsafe {
+            if value {
+                self.inner.logits.add(idx).write(1);
+            } else {
+                self.inner.logits.add(idx).write(0);
+            }
+        }
     }
 
     fn tokens(&self) -> usize {
@@ -1115,6 +1121,8 @@ impl Batch {
 
 impl Drop for Batch {
     fn drop(&mut self) {
+        trace!("Freeing batch");
+
         unsafe { llama_batch_free(self.inner) }
     }
 }
