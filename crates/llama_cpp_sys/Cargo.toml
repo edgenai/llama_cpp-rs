@@ -1,17 +1,41 @@
 [package]
 name = "llama_cpp_sys"
-version = "0.2.2"
+version = "0.3.0"
 description = "Automatically-generated bindings to llama.cpp's C API"
 edition = "2021"
-authors = ["Dakota Thompson <me@scriptis.net>"]
+authors = ["Dakota Thompson <me@scriptis.net>", "Pedro Valente <pedro.amaral.valente@gmail.com>"]
 repository = "https://github.com/binedge/llama_cpp-rs"
 license = "MIT OR Apache-2.0"
 readme = "../../README.md"
 publish = true
+links = "llama"
 
 [dependencies]
-link-cplusplus = "1.0.9"
+link-cplusplus = { workspace = true }
 
 [build-dependencies]
-bindgen = "0.69.1"
-cmake = "0.1.50"
+bindgen = { workspace = true }
+cc = { workspace = true, features = ["parallel"] }
+once_cell = { workspace = true }
+
+[features]
+default = ["compat", "native"]
+compat = [] # this feature modifies the symbols exposed by the generated libraries to avoid conflicts
+native = ["avx", "avx2", "fma", "f16c", "accel"]
+avx = []
+avx2 = []
+avx512 = []
+avx512_vmbi = []
+avx512_vnni = []
+fma = []
+f16c = [] # implied when compiled using MSVC with avx2/avx512
+accel = [] # Accelerate framework
+mpi = []
+cuda = []
+cuda_f16 = ["cuda"]
+cuda_dmmv = ["cuda"] # use dmmv instead of mmvq CUDA kernels
+cuda_mmq = ["cuda"] # use mmq kernels instead of cuBLAS
+metal = []
+blas = []
+hipblas = []
+clblast = []

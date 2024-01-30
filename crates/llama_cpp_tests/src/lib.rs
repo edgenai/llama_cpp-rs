@@ -5,10 +5,15 @@
 
 #[cfg(test)]
 mod tests {
-    use llama_cpp::LlamaModel;
+    use std::io;
+    use std::io::Write;
     use std::time::Duration;
+
     use tokio::select;
     use tokio::time::Instant;
+
+    use llama_cpp::standard_sampler::StandardSampler;
+    use llama_cpp::{LlamaModel, LlamaParams, SessionParams};
 
     async fn list_models() -> Vec<String> {
         let mut dir = std::env::var("LLAMA_CPP_TEST_MODELS").unwrap_or_else(|_| {
@@ -48,7 +53,9 @@ mod tests {
 
         for model in models {
             println!("Loading model: {}", model);
-            let _model = LlamaModel::load_from_file_async(model).await.unwrap();
+            let _model = LlamaModel::load_from_file_async(model, LlamaParams::default())
+                .await
+                .unwrap();
         }
     }
 
@@ -57,22 +64,53 @@ mod tests {
         let models = list_models().await;
 
         for model in models {
-            let model = LlamaModel::load_from_file_async(model).await.unwrap();
-            let mut session = model.create_session();
+            let model = LlamaModel::load_from_file_async(model, LlamaParams::default())
+                .await
+                .unwrap();
 
-            let mut completions = session.start_completing();
-            let timeout_by = Instant::now() + Duration::from_secs(5);
+            let mut params = SessionParams::default();
+            params.n_ctx = 2048;
+            let mut session = model.create_session(params);
+
+            session
+                .advance_context_async("<|SYSTEM|>You are a helpful assistant.")
+                .await
+                .unwrap();
+            session
+                .advance_context_async("<|USER|>How would you approach the trolley problem?")
+                .await
+                .unwrap();
+            session
+                .advance_context_async("<|ASSISTANT|>")
+                .await
+                .unwrap();
+
+            let completions = session.start_completing_with(StandardSampler::default(), 1024);
+            let timeout_by = Instant::now() + Duration::from_secs(500);
+
+            println!();
 
             loop {
                 select! {
                     _ = tokio::time::sleep_until(timeout_by) => {
                         break;
                     }
-                    _completion = completions.next_token_async() => {
+                    completion = completions.next_token_async() => {
+                        if let Some(token) = completion {
+                            if token == model.eos() {
+                                break;
+                            }
+
+                            let formatted = model.token_to_piece(token);
+                            print!("{formatted}");
+                            let _ = io::stdout().flush();
+                        }
                         continue;
                     }
                 }
             }
+            println!();
+            println!();
         }
     }
 }

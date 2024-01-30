@@ -1,21 +1,45 @@
 [package]
 name = "llama_cpp"
-version = "0.1.3"
+version = "0.3.0"
 description = "High-level bindings to llama.cpp with a focus on just being really, really easy to use"
 edition = "2021"
-authors = ["Dakota Thompson <me@scriptis.net>"]
+authors = ["Dakota Thompson <me@scriptis.net>", "Pedro Valente <pedro.amaral.valente@gmail.com>"]
 repository = "https://github.com/binedge/llama_cpp-rs"
 license = "MIT OR Apache-2.0"
 readme = "../../README.md"
 publish = true
 
 [dependencies]
-ctor = "0.2.5"
-derive_more = "0.99.17"
-flume = "0.11.0"
-llama_cpp_sys = { version = "^0.2.1", path = "../llama_cpp_sys" }
-num_cpus = "1.16.0"
-thiserror = "1.0.50"
-tinyvec = { version = "1.6.0", features = ["alloc"] }
-tokio = { version = "1.33.0", features = ["sync", "rt"] }
-tracing = "0.1.39"
+ctor = { workspace = true }
+derive_more = { workspace = true }
+flume = { workspace = true }
+llama_cpp_sys = { workspace = true, default-features = false }
+num_cpus = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["sync", "rt"] }
+tracing = { workspace = true }
+
+[features]
+default = ["compat", "native"]
+compat = ["llama_cpp_sys/compat"] # this feature modifies the symbols exposed by the generated libraries to avoid conflicts
+native = ["llama_cpp_sys/native", "avx", "avx2", "fma", "f16c", "accel"]
+avx = ["llama_cpp_sys/avx"]
+avx2 = ["llama_cpp_sys/avx2"]
+avx512 = ["llama_cpp_sys/avx512"]
+avx512_vmbi = ["llama_cpp_sys/avx512_vmbi"]
+avx512_vnni = ["llama_cpp_sys/avx512_vnni"]
+fma = ["llama_cpp_sys/fma"]
+f16c = ["llama_cpp_sys/f16c"] # implied when compiled using MSVC with avx2/avx512
+accel = ["llama_cpp_sys/accel"] # Accelerate framework
+mpi = ["llama_cpp_sys/mpi"]
+cuda = ["llama_cpp_sys/cuda"]
+cuda_f16 = ["llama_cpp_sys/cuda_f16", "cuda"]
+cuda_dmmv = ["llama_cpp_sys/cuda_dmmv", "cuda"] # use dmmv instead of mmvq CUDA kernels
+cuda_mmq = ["llama_cpp_sys/cuda_mmq", "cuda"] # use mmq kernels instead of cuBLAS
+metal = ["llama_cpp_sys/metal"]
+blas = ["llama_cpp_sys/blas"]
+hipblas = ["llama_cpp_sys/hipblas"]
+clblast = ["llama_cpp_sys/clblast"]
+
+[lib]
+doctest = false
