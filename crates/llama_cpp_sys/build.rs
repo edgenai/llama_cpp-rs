@@ -484,8 +484,15 @@ mod compat {
     /// [nm]: https://www.man7.org/linux/man-pages/man1/nm.1.html
     /// [objcopy]: https://www.man7.org/linux/man-pages/man1/objcopy.1.html
     fn tool_names() -> (&'static str, &'static str) {
-        let nm_names = ["nm", "llvm-nm"];
-        let objcopy_names = ["objcopy", "llvm-objcopy"];
+        let nm_names;
+        let objcopy_names;
+        if cfg!(target_family = "unix") {
+            nm_names = vec!["nm", "llvm-nm"];
+            objcopy_names = vec!["objcopy", "llvm-objcopy"];
+        } else {
+            nm_names = vec!["llvm-nm"];
+            objcopy_names = vec!["llvm-objcopy"];
+        }
 
         println!("Looking for \"nm\" or an equivalent tool");
         let nm_name = find_tool(&nm_names).expect(
@@ -509,7 +516,7 @@ mod compat {
             if let Ok(output) = Command::new(name).arg("--version").output() {
                 if output.status.success() {
                     let out_str = String::from_utf8_lossy(&output.stdout);
-                    println!("Valid \"nm\" found:\n{out_str}");
+                    println!("Valid \"tool\" found:\n{out_str}");
                     return Some(name);
                 }
             }
