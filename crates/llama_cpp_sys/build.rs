@@ -345,12 +345,14 @@ fn main() {
         // TODO this whole section is a bit hacky, could probably clean it up a bit, particularly the retrieval of symbols from the library files
         // TODO do this for cuda if necessary
 
-        let (ggml_lib_name, llama_lib_name, nm_name, objcopy_name) =
-            if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
-                ("libggml.a", "libllama.a", "nm", "objcopy")
-            } else {
-                ("ggml.lib", "llama.lib", "llvm-nm", "llvm-objcopy")
-            };
+        let (ggml_lib_name, llama_lib_name, nm_name, objcopy_name) = if cfg!(target_os = "windows")
+        {
+            ("ggml.lib", "llama.lib", "llvm-nm", "llvm-objcopy")
+        } else if cfg!(any(target_os = "macos", target_os = "ios")) {
+            ("libggml.a", "libllama.a", "nm", "llvm-objcopy")
+        } else {
+            ("libggml.a", "libllama.a", "nm", "objcopy")
+        };
         println!("Modifying {ggml_lib_name} and {llama_lib_name}, symbols acquired via \"{nm_name}\" and modified via \"{objcopy_name}\"");
 
         // Modifying symbols exposed by the ggml library
