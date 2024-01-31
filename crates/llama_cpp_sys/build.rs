@@ -494,15 +494,26 @@ mod compat {
             objcopy_names = vec!["llvm-objcopy"];
         }
 
-        println!("Looking for \"nm\" or an equivalent tool");
-        let nm_name = find_tool(&nm_names).expect(
-            "No suitable tool equivalent to \"nm\" has been found in \
-        PATH, if one is already installed, either add it to PATH or set NM_PATH to its full path",
-        );
+        let nm_name;
 
-        println!("Looking for \"objcopy\" or an equivalent tool");
-        let objcopy_name = find_tool(&objcopy_names).expect("No suitable tool equivalent to \"objcopy\" has \
-        been found in PATH, if one is already installed, either add it to PATH or set OBJCOPY_PATH to its full path");
+        if let Some(path) = option_env!("NM_PATH") {
+            nm_name = path;
+        } else {
+            println!("Looking for \"nm\" or an equivalent tool");
+            nm_name = find_tool(&nm_names).expect(
+                "No suitable tool equivalent to \"nm\" has been found in \
+            PATH, if one is already installed, either add it to PATH or set NM_PATH to its full path",
+            );
+        }
+
+        let objcopy_name;
+        if let Some(path) = option_env!("OBJCOPY_PATH") {
+            objcopy_name = path;
+        } else {
+            println!("Looking for \"objcopy\" or an equivalent tool");
+            objcopy_name = find_tool(&objcopy_names).expect("No suitable tool equivalent to \"objcopy\" has \
+            been found in PATH, if one is already installed, either add it to PATH or set OBJCOPY_PATH to its full path");
+        }
 
         (nm_name, objcopy_name)
     }
