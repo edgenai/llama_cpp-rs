@@ -14,17 +14,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [macos-latest, ubuntu-latest, windows-latest]
+        platform: [ macos-latest, ubuntu-latest, windows-latest ]
 
     runs-on: ${{ matrix.platform }}
 
     steps:
-    - uses: actions/checkout@v3
-    - name: Update submodules
-      run: git submodule update --init --recursive
-    - name: Build
-      run: cargo build --verbose
-    - name: Run tests
-      run: mkdir /tmp/models && cargo test --verbose
-      env:
-        LLAMA_CPP_TEST_MODELS: "/tmp/models"
+      - uses: actions/checkout@v3
+      - name: Install LLVM (for llvm-copy)
+        if: runner.os = 'macos-latest'
+        run: |
+          brew update
+          brew install llvm
+      - name: Update submodules
+        run: git submodule update --init --recursive
+      - name: Build
+        run: cargo build --verbose
+      - name: Run tests
+        run: mkdir /tmp/models && cargo test --verbose
+        env:
+          LLAMA_CPP_TEST_MODELS: "/tmp/models"
