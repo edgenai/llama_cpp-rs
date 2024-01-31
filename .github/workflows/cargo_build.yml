@@ -25,7 +25,7 @@ jobs:
         run: |
           brew update
           brew install llvm@17
-          export "OBJCOPY_PATH=$(brew --prefix llvm@17)/bin/llvm-objcopy"
+          echo "$(brew --prefix llvm@17)/bin" >> $GITHUB_PATH
       - name: Update submodules
         run: git submodule update --init --recursive
       - name: Build
