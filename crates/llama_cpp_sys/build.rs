@@ -351,6 +351,7 @@ fn main() {
             } else {
                 ("ggml.lib", "llama.lib", "llvm-nm", "llvm-objcopy")
             };
+        println!("Modifying {ggml_lib_name} and {llama_lib_name}, symbols acquired via \"{nm_name}\" and modified via \"{objcopy_name}\"");
 
         // Modifying symbols exposed by the ggml library
 
