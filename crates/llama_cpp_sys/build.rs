@@ -1,7 +1,5 @@
 use std::env;
 use std::path::{Path, PathBuf};
-#[cfg(feature = "compat")]
-use std::process::Command;
 
 use cc::Build;
 use once_cell::sync::Lazy;
@@ -342,17 +340,21 @@ fn main() {
 
     #[cfg(feature = "compat")]
     {
+        compat::redefine_symbols(out_path);
+    }
+}
+
+#[cfg(feature = "compat")]
+mod compat {
+    use crate::*;
+    use std::process::Command;
+
+    pub fn redefine_symbols(out_path: impl AsRef<Path>) {
         // TODO this whole section is a bit hacky, could probably clean it up a bit, particularly the retrieval of symbols from the library files
         // TODO do this for cuda if necessary
 
-        let (ggml_lib_name, llama_lib_name, nm_name, objcopy_name) = if cfg!(target_os = "windows")
-        {
-            ("ggml.lib", "llama.lib", "llvm-nm", "llvm-objcopy")
-        } else if cfg!(any(target_os = "macos", target_os = "ios")) {
-            ("libggml.a", "libllama.a", "nm", "llvm-objcopy")
-        } else {
-            ("libggml.a", "libllama.a", "nm", "objcopy")
-        };
+        let (ggml_lib_name, llama_lib_name) = lib_names();
+        let (nm_name, objcopy_name) = tool_names();
         println!("Modifying {ggml_lib_name} and {llama_lib_name}, symbols acquired via \"{nm_name}\" and modified via \"{objcopy_name}\"");
 
         // Modifying symbols exposed by the ggml library
@@ -369,7 +371,7 @@ fn main() {
                 output.status
             );
         }
-        let out_str = String::from_utf8_lossy(output.stdout.as_slice());
+        let out_str = String::from_utf8_lossy(&output.stdout);
         let symbols = get_symbols(
             &out_str,
             [
@@ -426,7 +428,7 @@ fn main() {
                 output.status
             );
         }
-        let out_str = String::from_utf8_lossy(output.stdout.as_slice());
+        let out_str = String::from_utf8_lossy(&output.stdout);
         let symbols = get_symbols(
             &out_str,
             [
@@ -457,46 +459,102 @@ fn main() {
             );
         }
     }
-}
 
-/// A filter for a symbol in a library.
-#[cfg(feature = "compat")]
-struct Filter<'a> {
-    prefix: &'a str,
-    sym_type: char,
-}
+    /// Returns *GGML*'s and *Llama.cpp*'s compiled library names, based on the operating system.
+    fn lib_names() -> (&'static str, &'static str) {
+        let ggml_lib_name;
+        let llama_lib_name;
+        if cfg!(target_family = "windows") {
+            ggml_lib_name = "ggml.lib";
+            llama_lib_name = "llama.lib";
+        } else if cfg!(target_family = "unix") {
+            ggml_lib_name = "libggml.a";
+            llama_lib_name = "libllama.a";
+        } else {
+            println!("cargo:warning=Unknown target family, defaulting to Unix lib names");
+            ggml_lib_name = "libggml.a";
+            llama_lib_name = "libllama.a";
+        };
 
-/// Helper function to turn **`nm`**'s output into an iterator of [`str`] symbols.
-///
-/// This function expects **`nm`** to be called using the **`-p`** and **`-P`** flags.
-#[cfg(feature = "compat")]
-fn get_symbols<'a, const N: usize>(
-    nm_output: &'a str,
-    filters: [Filter<'a>; N],
-) -> impl Iterator<Item = &'a str> + 'a {
-    nm_output
-        .lines()
-        .map(|symbol| {
-            // Strip irrelevant information
+        (ggml_lib_name, llama_lib_name)
+    }
 
-            let mut stripped = symbol;
-            while stripped.split(' ').count() > 2 {
-                let idx = unsafe { stripped.rfind(' ').unwrap_unchecked() };
-                stripped = &stripped[..idx]
-            }
-            stripped
-        })
-        .filter(move |symbol| {
-            // Filter matching symbols
+    /// Returns the names of tools equivalent to [nm][nm] and [objcopy][objcopy].
+    ///
+    /// [nm]: https://www.man7.org/linux/man-pages/man1/nm.1.html
+    /// [objcopy]: https://www.man7.org/linux/man-pages/man1/objcopy.1.html
+    fn tool_names() -> (&'static str, &'static str) {
+        let nm_names = ["nm", "llvm-nm"];
+        let objcopy_names = ["objcopy", "llvm-objcopy"];
 
-            if symbol.split(' ').count() == 2 {
-                for filter in &filters {
-                    if symbol.ends_with(filter.sym_type) && symbol.starts_with(filter.prefix) {
-                        return true;
-                    }
+        println!("Looking for \"nm\" or an equivalent tool");
+        let nm_name = find_tool(&nm_names).expect(
+            "No suitable tool equivalent to \"nm\" has been found in \
+        PATH, if one is already installed, either add it to PATH or set NM_PATH to its full path",
+        );
+
+        println!("Looking for \"objcopy\" or an equivalent tool");
+        let objcopy_name = find_tool(&objcopy_names).expect("No suitable tool equivalent to \"objcopy\" has \
+        been found in PATH, if one is already installed, either add it to PATH or set OBJCOPY_PATH to its full path");
+
+        (nm_name, objcopy_name)
+    }
+
+    /// Returns the first tool found in the system, given a list of tool names, returning the first one found and
+    /// printing its version.
+    ///
+    /// Returns [`Option::None`] if no tool is found.
+    fn find_tool<'a>(names: &[&'a str]) -> Option<&'a str> {
+        for name in names {
+            if let Ok(output) = Command::new(name).arg("--version").output() {
+                if output.status.success() {
+                    let out_str = String::from_utf8_lossy(&output.stdout);
+                    println!("Valid \"nm\" found:\n{out_str}");
+                    return Some(name);
                 }
             }
-            false
-        })
-        .map(|symbol| &symbol[..symbol.len() - 2]) // Strip the type, so only the symbol remains
+        }
+
+        None
+    }
+
+    /// A filter for a symbol in a library.
+    struct Filter<'a> {
+        prefix: &'a str,
+        sym_type: char,
+    }
+
+    /// Turns **`nm`**'s output into an iterator of [`str`] symbols.
+    ///
+    /// This function expects **`nm`** to be called using the **`-p`** and **`-P`** flags.
+    fn get_symbols<'a, const N: usize>(
+        nm_output: &'a str,
+        filters: [Filter<'a>; N],
+    ) -> impl Iterator<Item = &'a str> + 'a {
+        nm_output
+            .lines()
+            .map(|symbol| {
+                // Strip irrelevant information
+
+                let mut stripped = symbol;
+                while stripped.split(' ').count() > 2 {
+                    let idx = unsafe { stripped.rfind(' ').unwrap_unchecked() };
+                    stripped = &stripped[..idx]
+                }
+                stripped
+            })
+            .filter(move |symbol| {
+                // Filter matching symbols
+
+                if symbol.split(' ').count() == 2 {
+                    for filter in &filters {
+                        if symbol.ends_with(filter.sym_type) && symbol.starts_with(filter.prefix) {
+                            return true;
+                        }
+                    }
+                }
+                false
+            })
+            .map(|symbol| &symbol[..symbol.len() - 2]) // Strip the type, so only the symbol remains
+    }
 }
