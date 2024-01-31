@@ -178,10 +178,19 @@ fn compile_llama(cxx: &mut Build, cxx_flags: &str, _out_path: impl AsRef<Path>, 
         cxx.object(ggml_feature_obj);
     }*/
 
+    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "dragonfly"))]
+    {
+        cxx.define("_DARWIN_C_SOURCE", None);
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        cxx.define("_GNU_SOURCE", None);
+    }
+
     cxx.static_flag(true)
         .file(LLAMA_PATH.join("llama.cpp"))
         .cpp(true)
-        .define("_GNU_SOURCE", None)
         .define("_XOPEN_SOURCE", "600")
         .compile("llama");
 }
