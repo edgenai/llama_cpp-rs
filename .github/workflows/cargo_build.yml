@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: Install LLVM (for llvm-copy)
-        if: runner.os == 'macos-latest'
+        if: matrix.platform == 'macos-latest'
         run: |
           brew update
           brew install llvm@17
