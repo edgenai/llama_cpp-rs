@@ -24,7 +24,7 @@ jobs:
         if: runner.os == 'macos-latest'
         run: |
           brew update
-          brew install llvm
+          brew install llvm@17
       - name: Update submodules
         run: git submodule update --init --recursive
       - name: Build
