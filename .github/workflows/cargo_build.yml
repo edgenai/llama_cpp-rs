@@ -14,14 +14,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [ macos-latest, ubuntu-latest, windows-latest, macos-latest-arm64 ]
+        platform: [ macos-latest, ubuntu-latest, windows-latest ]
 
     runs-on: ${{ matrix.platform }}
 
     steps:
       - uses: actions/checkout@v3
       - name: Install LLVM (for llvm-copy)
-        if: matrix.platform == 'macos-latest' || matrix.platform == 'macos-latest-arm64'
+        if: runner.os == 'macos'
         run: |
           brew update
           brew install llvm@17
