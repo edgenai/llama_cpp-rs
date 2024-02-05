@@ -131,7 +131,12 @@ fn compile_cuda(cxx_flags: &str) {
 
 fn compile_ggml(cx: &mut Build, cx_flags: &str) {
     for cx_flag in cx_flags.split_whitespace() {
-        cx.flag(cx_flag);
+        cx.flag_if_supported(cx_flag);
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        cx.define("_GNU_SOURCE", None);
     }
 
     cx.include(LLAMA_PATH.as_path())
@@ -141,7 +146,6 @@ fn compile_ggml(cx: &mut Build, cx_flags: &str) {
         .file(LLAMA_PATH.join("ggml-quants.c"))
         .cpp(false)
         .static_flag(true)
-        .define("_GNU_SOURCE", None)
         .define("_XOPEN_SOURCE", "600")
         .define("GGML_USE_K_QUANTS", None)
         .compile("ggml");
@@ -162,19 +166,8 @@ fn compile_metal(cx: &mut Build, cxx: &mut Build) {
 
 fn compile_llama(cxx: &mut Build, cxx_flags: &str, _out_path: impl AsRef<Path>, _ggml_type: &str) {
     for cxx_flag in cxx_flags.split_whitespace() {
-        cxx.flag(cxx_flag);
+        cxx.flag_if_supported(cxx_flag);
     }
-
-    //let ggml_obj = out_path.as_ref().join("thirdparty/llama.cpp/ggml.o");
-
-    //cxx.object(ggml_obj);
-
-    /*if !ggml_type.is_empty() {
-        let ggml_feature_obj = out_path
-            .as_ref()
-            .join(format!("thirdparty/llama.cpp/ggml-{}.o", ggml_type));
-        cxx.object(ggml_feature_obj);
-    }*/
 
     #[cfg(any(target_os = "macos", target_os = "ios", target_os = "dragonfly"))]
     {
@@ -208,8 +201,8 @@ fn main() {
     let mut cx_flags = String::from("");
     let mut cxx_flags = String::from("");
 
-    // check if os is linux
-    // if so, add -fPIC to cxx_flags
+    // Standard compilation flags
+
     if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
         cx_flags.push_str(" -std=c11 -Wall -Wextra -Wpedantic -Wcast-qual -Wdouble-promotion -Wshadow -Wstrict-prototypes -Wpointer-arith -pthread");
         cxx_flags.push_str(" -std=c++11 -Wall -Wdeprecated-declarations -Wunused-but-set-variable -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wno-multichar -fPIC -pthread");
@@ -218,76 +211,90 @@ fn main() {
         cxx_flags.push_str(" /W4 /Wall /wd4820 /wd4710 /wd4711 /wd4820 /wd4514");
     }
 
+    // Feature flags
+
     // TODO in llama.cpp's cmake (https://github.com/ggerganov/llama.cpp/blob/9ecdd12e95aee20d6dfaf5f5a0f0ce5ac1fb2747/CMakeLists.txt#L659), they include SIMD instructions manually, however it doesn't seem to be necessary for VS2022's MSVC, check when it is needed
     // TODO add missing windows feature support
 
-    #[cfg(feature = "native")]
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
-        if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
-            cx_flags.push_str(" -march=native -mtune=native");
-            cxx_flags.push_str(" -march=native -mtune=native");
+        #[cfg(feature = "native")]
+        {
+            if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
+                cx_flags.push_str(" -march=native -mtune=native");
+                cxx_flags.push_str(" -march=native -mtune=native");
+            }
+        }
+
+        #[cfg(feature = "fma")]
+        {
+            if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
+                cx_flags.push_str(" -mfma");
+                cxx_flags.push_str(" -mfma");
+            }
+        }
+
+        #[cfg(feature = "f16c")]
+        {
+            if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
+                cx_flags.push_str(" -mf16c");
+                cxx_flags.push_str(" -mf16c");
+            }
+        }
+
+        #[cfg(feature = "avx")]
+        {
+            if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
+                cx_flags.push_str(" -mavx");
+                cxx_flags.push_str(" -mavx");
+            } else if !(cfg!(feature = "avx2") || cfg!(feature = "avx512")) {
+                cx_flags.push_str(" /arch:AVX");
+                cxx_flags.push_str(" /arch:AVX");
+            }
+        }
+
+        #[cfg(feature = "avx2")]
+        {
+            if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
+                cx_flags.push_str(" -mavx2");
+                cxx_flags.push_str(" -mavx2");
+            } else if !cfg!(feature = "avx512") {
+                cx_flags.push_str(" /arch:AVX2");
+                cxx_flags.push_str(" /arch:AVX2");
+            }
+        }
+
+        #[cfg(feature = "avx512")]
+        {
+            if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
+                cx_flags.push_str(" -mavx512f -mavx512bw");
+                cxx_flags.push_str(" -mavx512f -mavx512bw");
+            }
+        }
+
+        #[cfg(feature = "avx512_vmbi")]
+        {
+            if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
+                cx_flags.push_str(" -mavx512vbmi");
+                cxx_flags.push_str(" -mavx512vbmi");
+            }
+        }
+
+        #[cfg(feature = "avx512_vnni")]
+        {
+            if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
+                cx_flags.push_str(" -mavx512vnni");
+                cxx_flags.push_str(" -mavx512vnni");
+            }
         }
     }
 
-    #[cfg(feature = "fma")]
+    #[cfg(any(target_arch = "arm", target_arch = "aarch64"))]
     {
-        if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
-            cx_flags.push_str(" -mfma");
-            cxx_flags.push_str(" -mfma");
-        }
-    }
-
-    #[cfg(feature = "f16c")]
-    {
-        if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
-            cx_flags.push_str(" -mf16c");
-            cxx_flags.push_str(" -mf16c");
-        }
-    }
-
-    #[cfg(feature = "avx")]
-    {
-        if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
-            cx_flags.push_str(" -mavx");
-            cxx_flags.push_str(" -mavx");
-        } else if !(cfg!(feature = "avx2") || cfg!(feature = "avx512")) {
-            cx_flags.push_str(" /arch:AVX");
-            cxx_flags.push_str(" /arch:AVX");
-        }
-    }
-
-    #[cfg(feature = "avx2")]
-    {
-        if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
-            cx_flags.push_str(" -mavx2");
-            cxx_flags.push_str(" -mavx2");
-        } else if !cfg!(feature = "avx512") {
-            cx_flags.push_str(" /arch:AVX2");
-            cxx_flags.push_str(" /arch:AVX2");
-        }
-    }
-
-    #[cfg(feature = "avx512")]
-    {
-        if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
-            cx_flags.push_str(" -mavx512f -mavx512bw");
-            cxx_flags.push_str(" -mavx512f -mavx512bw");
-        }
-    }
-
-    #[cfg(feature = "avx512_vmbi")]
-    {
-        if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
-            cx_flags.push_str(" -mavx512vbmi");
-            cxx_flags.push_str(" -mavx512vbmi");
-        }
-    }
-
-    #[cfg(feature = "avx512_vnni")]
-    {
-        if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
-            cx_flags.push_str(" -mavx512vnni");
-            cxx_flags.push_str(" -mavx512vnni");
+        #[cfg(target_family = "unix")]
+        {
+            cx_flags.push_str(" -mavx512vnni -mfp16-format=ieee");
+            cxx_flags.push_str(" -mavx512vnni -mfp16-format=ieee");
         }
     }
 
