@@ -11,12 +11,12 @@ publish = true
 links = "llama"
 
 [dependencies]
-link-cplusplus = { workspace = true }
+link-cplusplus = "1.0.9"
 
 [build-dependencies]
-bindgen = { workspace = true }
-cc = { workspace = true, features = ["parallel"] }
-once_cell = { workspace = true }
+bindgen = "0.69.4"
+cc = { version = "1.0.83", features = ["parallel"] }
+once_cell = "1.19.0"
 
 [features]
 default = ["compat", "native"]
