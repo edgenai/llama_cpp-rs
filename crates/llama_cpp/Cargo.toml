@@ -10,14 +10,14 @@ readme = "../../README.md"
 publish = true
 
 [dependencies]
-ctor = { workspace = true }
-derive_more = { workspace = true }
-flume = { workspace = true }
-llama_cpp_sys = { workspace = true, default-features = false }
-num_cpus = { workspace = true }
-thiserror = { workspace = true }
+ctor = "0.2.6"
+derive_more = "0.99.17"
+flume = "0.11.0"
+llama_cpp_sys = { version = "^0.3", path = "../llama_cpp_sys", default-features = false }
+num_cpus = "1.16.0"
+thiserror = "1.0.56"
 tokio = { workspace = true, features = ["sync", "rt"] }
-tracing = { workspace = true }
+tracing = "0.1.40"
 
 [features]
 default = ["compat", "native"]
