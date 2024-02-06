@@ -1,10 +1,10 @@
 [package]
 name = "llama_cpp_tests"
-version = "0.3.0"
+version = "0.2.9"
 edition = "2021"
 publish = false
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-llama_cpp = { version = "^0.3", path = "../llama_cpp", default-features = false, features = ["native", "compat"] }
+llama_cpp = { version = "^0.2.9", path = "../llama_cpp", default-features = false, features = ["native", "compat"] }
 tokio = { workspace = true, features = ["full"] }
