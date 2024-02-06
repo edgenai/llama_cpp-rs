@@ -914,7 +914,7 @@ pub struct SessionParams {
     pub n_threads_batch: u32,
 
     /// RoPE scaling type, from [`llama_rope_scaling_type`]
-    pub rope_scaling_type: i8,
+    pub rope_scaling_type: i32,
 
     /// ref: https://github.com/ggerganov/llama.cpp/pull/2054
 
