@@ -59,7 +59,7 @@
           pkg-config
         ];
 
-        devInputs = clangBuildInputs ++ nativeBuildInputs ++ (with pkgs; [ nixfmt openssl ]);
+        devInputs = clangBuildInputs ++ nativeBuildInputs ++ (with pkgs; [ nixfmt openssl vulkan-loader vulkan-headers ]);
 
         stdenv = pkgs.stdenv;
         lib = pkgs.lib;
@@ -84,6 +84,8 @@
                 ${lib.optionalString stdenv.cc.isClang "-idirafter ${stdenv.cc.cc}/lib/clang/${lib.getVersion stdenv.cc.cc}/include"} \
                 ${lib.optionalString stdenv.cc.isGNU "-isystem ${stdenv.cc.cc}/include/c++/${lib.getVersion stdenv.cc.cc} -isystem ${stdenv.cc.cc}/include/c++/${lib.getVersion stdenv.cc.cc}/${stdenv.hostPlatform.config}"}
               "
+
+              export VULKAN_SDK=${pkgs.vulkan-loader}
             '';
           }];
         };

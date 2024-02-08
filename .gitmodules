@@ -1,3 +1,6 @@
 [submodule "crates/llama_cpp_sys/thirdparty/llama.cpp"]
 	path = crates/llama_cpp_sys/thirdparty/llama.cpp
 	url = https://github.com/ggerganov/llama.cpp.git
+[submodule "crates/llama_cpp_sys/thirdparty/Vulkan-Headers"]
+	path = crates/llama_cpp_sys/thirdparty/Vulkan-Headers
+	url = git@github.com:KhronosGroup/Vulkan-Headers.git

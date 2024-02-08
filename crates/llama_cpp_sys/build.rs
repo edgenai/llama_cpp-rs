@@ -372,7 +372,7 @@ fn compile_vulkan(cxx: &mut Build) {
     println!("Compiling Vulkan GGML..");
     println!("cargo:rerun-if-env-changed=VULKAN_SDK");
 
-    let include_path = if let Some(sdk_path) = option_env!("VULKAN_SDK") {
+    if let Some(sdk_path) = option_env!("VULKAN_SDK") {
         println!("Found Vulkan SDK path in system: \"{sdk_path}\"");
         let (lib_folder, lib_name) = if cfg!(target_os = "windows") {
             let folder = if cfg!(target_arch = "x86_64") || cfg!(target_arch = "aarch64") {
@@ -387,13 +387,11 @@ fn compile_vulkan(cxx: &mut Build) {
 
         println!("cargo:rustc-link-search={sdk_path}/{lib_folder}");
         println!("cargo:rustc-link-lib={lib_name}");
-
-        format!("{sdk_path}/Include")
     } else {
         todo!()
     };
 
-    cxx.include(include_path)
+    cxx.include("./thirdparty/Vulkan-Headers/include/")
         .file(LLAMA_PATH.join("ggml-vulkan.cpp"))
         .define("GGML_USE_VULKAN", None);
 }
@@ -410,7 +408,9 @@ fn compile_ggml(mut cx: Build) {
 
 fn compile_llama(mut cxx: Build, _out_path: impl AsRef<Path>, _ggml_type: &str) {
     println!("Compiling Llama.cpp..");
-    cxx.file(LLAMA_PATH.join("llama.cpp")).compile("llama");
+    cxx.include(LLAMA_PATH.as_path())
+        .file(LLAMA_PATH.join("llama.cpp"))
+        .compile("llama");
 }
 
 fn main() {
@@ -433,11 +433,9 @@ fn main() {
 
     let mut ggml_type = String::new();
 
-    cxx.include(LLAMA_PATH.join("common"))
-        .include(LLAMA_PATH.as_path())
-        .include("./include");
-
-    if cfg!(feature = "opencl") {
+    if cfg!(feature = "vulkan") {
+        compile_vulkan(&mut cxx);
+    } else if cfg!(feature = "opencl") {
         compile_opencl(&mut cx, &mut cxx);
         ggml_type = "opencl".to_string();
     } else if cfg!(feature = "openblas") {
@@ -483,6 +481,7 @@ fn main() {
 
 #[cfg(feature = "compat")]
 mod compat {
+    use std::collections::HashSet;
     use std::process::Command;
 
     use crate::*;
@@ -687,8 +686,8 @@ mod compat {
     fn get_symbols<'a, const N: usize>(
         nm_output: &'a str,
         filters: [Filter<'a>; N],
-    ) -> impl Iterator<Item = &'a str> + 'a {
-        nm_output
+    ) -> HashSet<&'a str> {
+        let iter = nm_output
             .lines()
             .map(|symbol| {
                 // Strip irrelevant information
@@ -712,6 +711,8 @@ mod compat {
                 }
                 false
             })
-            .map(|symbol| &symbol[..symbol.len() - 2]) // Strip the type, so only the symbol remains
+            .map(|symbol| &symbol[..symbol.len() - 2]); // Strip the type, so only the symbol remains
+
+        HashSet::from_iter(iter)
     }
 }
