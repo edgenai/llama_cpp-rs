@@ -161,9 +161,7 @@ fn push_feature_flags(cx_flags: &mut Vec<&str>, cxx_flags: &mut Vec<&str>) {
     if cfg!(any(target_arch = "x86", target_arch = "x86_64")) {
         if cfg!(feature = "native") && cfg!(target_family = "unix") {
             cx_flags.push("-march=native");
-            cx_flags.push("-mtune=native");
             cxx_flags.push("-march=native");
-            cxx_flags.push("-mtune=native");
         }
 
         if cfg!(feature = "fma") && cfg!(target_family = "unix") {
@@ -176,8 +174,8 @@ fn push_feature_flags(cx_flags: &mut Vec<&str>, cxx_flags: &mut Vec<&str>) {
             cxx_flags.push("-mf16c");
         }
 
-        if cfg!(feature = "avx512") {
-            if cfg!(target_family = "unix") {
+        if cfg!(target_family = "unix") {
+            if cfg!(feature = "avx512") {
                 cx_flags.push("-mavx512f");
                 cx_flags.push("-mavx512bw");
                 cxx_flags.push("-mavx512f");
@@ -188,34 +186,41 @@ fn push_feature_flags(cx_flags: &mut Vec<&str>, cxx_flags: &mut Vec<&str>) {
                     cxx_flags.push("-mavx512vbmi");
                 }
 
-                if cfg!(feature = "avx512_vmbi") {
+                if cfg!(feature = "avx512_vnni") {
                     cx_flags.push("-mavx512vnni");
                     cxx_flags.push("-mavx512vnni");
                 }
-            } else if cfg!(target_family = "windows") {
-                todo!()
-            } else {
-                unimplemented!("Other platforms are not yet supported")
             }
-        } else if cfg!(feature = "avx2") {
-            if cfg!(target_family = "unix") {
+
+            if cfg!(feature = "avx2") {
                 cx_flags.push("-mavx2");
                 cxx_flags.push("-mavx2");
-            } else if cfg!(target_family = "windows") {
-                cx_flags.push("/arch:AVX2");
-                cxx_flags.push("/arch:AVX2");
-            } else {
-                unimplemented!("Other platforms are not yet supported")
             }
-        } else if cfg!(feature = "avx") {
-            if cfg!(target_family = "unix") {
+
+            if cfg!(feature = "avx") {
                 cx_flags.push("-mavx");
                 cxx_flags.push("-mavx");
-            } else if cfg!(target_family = "windows") {
+            }
+        } else if cfg!(target_family = "windows") {
+            if cfg!(feature = "avx512") {
+                cx_flags.push("/arch:AVX512");
+                cxx_flags.push("/arch:AVX512");
+
+                if cfg!(feature = "avx512_vmbi") {
+                    cx_flags.push("/D__AVX512VBMI__");
+                    cxx_flags.push("/D__AVX512VBMI__");
+                }
+
+                if cfg!(feature = "avx512_vnni") {
+                    cx_flags.push("/D__AVX512VNNI__");
+                    cxx_flags.push("/D__AVX512VNNI__");
+                }
+            } else if cfg!(feature = "avx2") {
+                cx_flags.push("/arch:AVX2");
+                cxx_flags.push("/arch:AVX2");
+            } else if cfg!(feature = "avx") {
                 cx_flags.push("/arch:AVX");
                 cxx_flags.push("/arch:AVX");
-            } else {
-                unimplemented!("Other platforms are not yet supported")
             }
         }
     }
@@ -368,7 +373,7 @@ fn compile_vulkan(cxx: &mut Build) {
 fn compile_ggml(cx: &mut Build, cx_flags: &Vec<&str>) {
     println!("Compiling GGML..");
     for cx_flag in cx_flags {
-        cx.flag_if_supported(cx_flag);
+        cx.flag(cx_flag);
     }
 
     #[cfg(target_os = "linux")]
@@ -396,7 +401,7 @@ fn compile_llama(
 ) {
     println!("Compiling Llama.cpp..");
     for cxx_flag in cxx_flags {
-        cxx.flag_if_supported(cxx_flag);
+        cxx.flag(cxx_flag);
     }
 
     #[cfg(any(target_os = "macos", target_os = "ios", target_os = "dragonfly"))]
