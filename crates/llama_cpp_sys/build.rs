@@ -102,6 +102,22 @@ fn push_common_flags(cx: &mut Build, cxx: &mut Build) {
     cx.static_flag(true).cpp(false).std("c11");
     cxx.static_flag(true).cpp(true).std("c++14"); // MSVC does not support C++11
 
+    if !cfg!(debug_assertions) {
+        cx.define("NDEBUG", None);
+        cxx.define("NDEBUG", None);
+    } else {
+        cx.define("GGML_DEBUG", "100");
+        cxx.define("GGML_DEBUG", "100");
+
+        if cfg!(target_os = "linux") {
+            cx.define("_GLIBCXX_ASSERTIONS", None);
+            cxx.define("_GLIBCXX_ASSERTIONS", None);
+        } else if cfg!(target_os = "windows") {
+            cx.define("_CRT_SECURE_NO_WARNINGS", None);
+            cxx.define("_CRT_SECURE_NO_WARNINGS", None);
+        }
+    }
+
     if cfg!(target_family = "unix") {
         cx.flag("-pthread")
             .flag("-Wall")
@@ -368,7 +384,7 @@ fn compile_metal(_cx: &mut Build, _cxx: &mut Build) {
     //     .file(LLAMA_PATH.join("ggml-metal.m"));
 }
 
-fn compile_vulkan(cxx: &mut Build) {
+fn compile_vulkan(cx: &mut Build, cxx: &mut Build) {
     println!("Compiling Vulkan GGML..");
     println!("cargo:rerun-if-env-changed=VULKAN_SDK");
 
@@ -391,6 +407,16 @@ fn compile_vulkan(cxx: &mut Build) {
         todo!()
     };
 
+    if cfg!(debug_assertions) {
+        cx.define("GGML_VULKAN_CHECK_RESULTS", None)
+            .define("GGML_VULKAN_DEBUG", None)
+            .define("GGML_VULKAN_VALIDATE", None);
+        cxx.define("GGML_VULKAN_CHECK_RESULTS", None)
+            .define("GGML_VULKAN_DEBUG", None)
+            .define("GGML_VULKAN_VALIDATE", None);
+    }
+
+    cx.define("GGML_USE_VULKAN", None);
     cxx.include("./thirdparty/Vulkan-Headers/include/")
         .file(LLAMA_PATH.join("ggml-vulkan.cpp"))
         .define("GGML_USE_VULKAN", None);
@@ -434,7 +460,7 @@ fn main() {
     let mut ggml_type = String::new();
 
     if cfg!(feature = "vulkan") {
-        compile_vulkan(&mut cxx);
+        compile_vulkan(&mut cx, &mut cxx);
     } else if cfg!(feature = "opencl") {
         compile_opencl(&mut cx, &mut cxx);
         ggml_type = "opencl".to_string();
