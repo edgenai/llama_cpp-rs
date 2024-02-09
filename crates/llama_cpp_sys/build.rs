@@ -449,6 +449,8 @@ fn main() {
 
     let out_path = PathBuf::from(env::var("OUT_DIR").expect("No out dir found"));
 
+    println!("cargo:rerun-if-changed={}", LLAMA_PATH.to_string_lossy());
+
     compile_bindings(&out_path);
 
     let mut cx = Build::new();

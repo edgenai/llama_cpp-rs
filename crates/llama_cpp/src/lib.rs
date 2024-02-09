@@ -16,7 +16,7 @@
 //!
 //! // A `LlamaModel` holds the weights shared across many _sessions_; while your model may be
 //! // several gigabytes large, a session is typically a few dozen to a hundred megabytes!
-//! let mut ctx = model.create_session(SessionParams::default());
+//! let mut ctx = model.create_session(SessionParams::default()).unwrap();
 //!
 //! // You can feed anything that implements `AsRef<[u8]>` into the model's context.
 //! ctx.advance_context("This is the story of a man named Stanley.").unwrap();
@@ -94,10 +94,10 @@ use llama_cpp_sys::{
     llama_batch_init, llama_beam_search, llama_context, llama_context_default_params,
     llama_context_params, llama_decode, llama_free, llama_free_model, llama_get_logits_ith,
     llama_load_model_from_file, llama_log_set, llama_model, llama_model_default_params,
-    llama_n_vocab, llama_new_context_with_model, llama_token_bos, llama_token_data,
-    llama_token_data_array, llama_token_eos, llama_token_eot, llama_token_get_text,
-    llama_token_middle, llama_token_nl, llama_token_prefix, llama_token_suffix,
-    llama_token_to_piece, llama_tokenize,
+    llama_n_vocab, llama_new_context_with_model, llama_split_mode_LLAMA_SPLIT_NONE,
+    llama_token_bos, llama_token_data, llama_token_data_array, llama_token_eos, llama_token_eot,
+    llama_token_get_text, llama_token_middle, llama_token_nl, llama_token_prefix,
+    llama_token_suffix, llama_token_to_piece, llama_tokenize,
 };
 
 /// The standard sampler implementation.
@@ -279,7 +279,10 @@ impl LlamaModel {
             return Err(LlamaLoadError::DoesNotExist(file_path.into()));
         }
 
-        let params = unsafe { llama_model_default_params() };
+        let mut params = unsafe { llama_model_default_params() };
+        params.split_mode = llama_split_mode_LLAMA_SPLIT_NONE;
+        // params.n_gpu_layers = 33;
+        // params.main_gpu = 1;
 
         // TODO create params from model_params
 
@@ -456,7 +459,10 @@ impl LlamaModel {
     /// The vast majority of loaded data (weights) are immutably stored in the model, with a much
     /// smaller state belonging to each context. For Zephyr 7B, this works out to about 4GiB for
     /// the model weights and 100MiB for each session.
-    pub fn create_session(&self, session_params: SessionParams) -> LlamaSession {
+    pub fn create_session(
+        &self,
+        session_params: SessionParams,
+    ) -> Result<LlamaSession, LlamaContextError> {
         let params = llama_context_params::from(session_params);
         let max_batch = params.n_batch;
 
@@ -465,8 +471,11 @@ impl LlamaModel {
             // for at least the lifetime of `LlamaContext`.
             llama_new_context_with_model(**self.model.try_read().unwrap(), params)
         };
+        if ctx.is_null() {
+            return Err(LlamaContextError::SessionFailed);
+        }
 
-        LlamaSession {
+        Ok(LlamaSession {
             inner: Arc::new(LlamaSessionInner {
                 model: self.clone(),
                 ctx: Mutex::new(LlamaContextInner { ptr: ctx }),
@@ -474,7 +483,7 @@ impl LlamaModel {
                 last_batch_size: AtomicUsize::new(0),
                 max_batch,
             }),
-        }
+        })
     }
 
     /// Returns the beginning of sentence (BOS) token for this context.
@@ -586,8 +595,12 @@ pub enum LlamaContextError {
     NoTokensProvided,
 
     /// An error occurred on the other side of the FFI boundary; check your logs.
-    #[error("advancing context failed: {0}")]
-    LlamaError(#[from] LlamaInternalError),
+    #[error("failed to create llama context")]
+    SessionFailed,
+
+    /// An error occurred on the other side of the FFI boundary; check your logs.
+    #[error("advancing context failed (error code {0})")]
+    DecodeFailed(i32),
 }
 
 impl LlamaSession {
@@ -642,16 +655,15 @@ impl LlamaSession {
             trace!("Wrote {n_tokens} tokens to the token buffer");
             trace!("Starting LLaMA decode for batch");
 
-            if unsafe {
+            let err = unsafe {
                 // SAFETY: `llama_decode` will not fail for a valid `batch`, which we correctly
                 // initialized above.
                 llama_decode(self.inner.ctx.blocking_lock().ptr, batch.handle())
-            } != 0
-            {
-                return Err(LlamaInternalError.into());
-            } else {
-                trace!("Batch decode completed successfully");
+            };
+            if err != 0 {
+                return Err(LlamaContextError::DecodeFailed(err));
             }
+            trace!("Batch decode completed successfully");
 
             last_batch_size = sequence.len();
         }
@@ -1231,6 +1243,7 @@ mod detail {
             text.as_ref()
         };
 
+        println!("ggml: {text}");
         match level {
             ggml_log_level_GGML_LOG_LEVEL_ERROR => error!("ggml: {text}"),
             ggml_log_level_GGML_LOG_LEVEL_INFO => info!("ggml: {text}"),
