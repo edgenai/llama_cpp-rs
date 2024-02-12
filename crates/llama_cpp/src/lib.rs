@@ -83,8 +83,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::{ptr, thread};
 
-use ctor::{ctor, dtor};
 use derive_more::{Deref, DerefMut};
+use futures::executor::block_on;
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock};
 use tracing::{error, info, trace, warn};
@@ -103,47 +103,85 @@ use llama_cpp_sys::{
 /// The standard sampler implementation.
 pub mod standard_sampler;
 
-/// Boolean indicating if a logger has already been set using [`llama_log_set`].
-static LOGGER_SET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The current instance of [`Backend`], if it exists. Also stored is a reference count used for
+/// initialisation and freeing.
+static BACKEND: Mutex<Option<(Backend, usize)>> = Mutex::const_new(None);
 
-/// [ctor](https://docs.rs/ctor/latest/ctor/) wind-up binding to invoke llama.cpp's
-/// `llama_backend_init`, which is required before using the library.
-///
-/// This executes automatically before `main` via some linker shenanigans.
-#[ctor]
-fn llama_cpp_up() {
-    unsafe {
-        // SAFETY: This is the only time that `llama_backend_init` is called. We always assume that
-        // NUMA is available.
-        llama_backend_init(true);
-    }
-}
-
-/// [ctor](https://docs.rs/ctor/latest/ctor/) teardown binding to invoke llama.cpp's
-/// `llama_backend_free`, which frees any memory claimed by [`llama_cpp_up`].
-///
-/// This executes automatically following `main` via some linker shenanigans.
-#[dtor]
-fn llama_cpp_down() {
-    unsafe {
-        // SAFETY: This is the only time that `llama_backend_free` is called.
-        llama_backend_free();
-    }
-}
-
-/// Sets the global [`llama.cpp`][llama.cpp] logger, if it wasn't set already.
-///
-/// The logger set by [`llama_log_set`] seems to reset itself when set inside [`llama_cpp_up`],
-/// which is why this function has to be called everytime a new model is loaded instead.
+/// Empty struct used to initialise and free the [llama.cpp][llama.cpp] backend when it is created
+/// dropped respectively.
 ///
 /// [llama.cpp]: https://github.com/ggerganov/llama.cpp/
-fn set_log() {
-    if !LOGGER_SET.swap(true, Ordering::SeqCst) {
+struct Backend {}
+
+impl Backend {
+    /// Initialises the [llama.cpp][llama.cpp] backend and sets its logger.
+    ///
+    /// There should only ever be one instance of this struct at any given time.
+    ///
+    /// [llama.cpp]: https://github.com/ggerganov/llama.cpp/
+    fn init() -> Self {
         unsafe {
+            // SAFETY: This is only called when no models or sessions exist.
+            llama_backend_init(true);
+
             // SAFETY: performs a simple assignment to static variables. Should only execute once
             // before any logs are made.
             llama_log_set(Some(detail::llama_log_callback), ptr::null_mut());
         }
+
+        Self {}
+    }
+}
+
+impl Drop for Backend {
+    fn drop(&mut self) {
+        unsafe {
+            // SAFETY: This is only called when no models or sessions exist.
+            llama_backend_free();
+        }
+    }
+}
+
+/// A "reference" to [`BACKEND`].
+///
+/// Initialises [`BACKEND`] if there is no [`Backend`] inside. If there are no other references,
+/// this drops [`Backend`] upon getting itself dropped.
+struct BackendRef {}
+
+impl BackendRef {
+    /// Creates a new reference, initialising [`BACKEND`] if necessary.
+    async fn new() -> Self {
+        let mut lock = BACKEND.lock().await;
+        if let Some((_, count)) = lock.as_mut() {
+            *count += 1;
+        } else {
+            let _ = lock.insert((Backend::init(), 1));
+        }
+
+        Self {}
+    }
+}
+
+impl Drop for BackendRef {
+    fn drop(&mut self) {
+        block_on(async move {
+            let mut lock = BACKEND.lock().await;
+            if let Some((_, count)) = lock.as_mut() {
+                *count -= 1;
+
+                if *count == 0 {
+                    lock.take();
+                }
+            } else {
+                error!("Backend as already been freed, this should never happen")
+            }
+        });
+    }
+}
+
+impl Clone for BackendRef {
+    fn clone(&self) -> Self {
+        block_on(Self::new())
     }
 }
 
@@ -203,7 +241,12 @@ pub struct LlamaInternalError;
 /// This is a thin wrapper over an `Arc<RwLock<*mut llama_model>>`, which is used to share the
 /// model across threads.
 #[derive(Clone, Deref, DerefMut)]
-struct LlamaModelInner(*mut llama_model);
+struct LlamaModelInner {
+    #[deref]
+    #[deref_mut]
+    model: *mut llama_model,
+    _backend_ref: BackendRef,
+}
 
 unsafe impl Send for LlamaModelInner {}
 
@@ -216,7 +259,7 @@ impl Drop for LlamaModelInner {
             // `free`d yet.
             //
             // [1]: See https://github.com/rust-lang/rust/issues/60977
-            llama_free_model(self.0);
+            llama_free_model(self.model);
         }
     }
 }
@@ -271,7 +314,8 @@ impl LlamaModel {
         file_path: impl AsRef<Path>,
         _model_params: LlamaParams,
     ) -> Result<Self, LlamaLoadError> {
-        set_log();
+        let backend_ref = block_on(BackendRef::new());
+        info!("Loading model \"{}\"", file_path.as_ref().to_string_lossy());
 
         let file_path = file_path.as_ref();
 
@@ -281,7 +325,7 @@ impl LlamaModel {
 
         let mut params = unsafe { llama_model_default_params() };
         params.split_mode = llama_split_mode_LLAMA_SPLIT_NONE;
-        // params.n_gpu_layers = 33;
+        params.n_gpu_layers = 999;
         // params.main_gpu = 1;
 
         // TODO create params from model_params
@@ -313,7 +357,10 @@ impl LlamaModel {
             };
 
             Ok(Self {
-                model: Arc::new(RwLock::new(LlamaModelInner(model))),
+                model: Arc::new(RwLock::new(LlamaModelInner {
+                    model,
+                    _backend_ref: backend_ref,
+                })),
                 vocabulary_size: vocabulary_size as usize,
                 bos_token: Token(unsafe { llama_token_bos(model) }),
                 eos_token: Token(unsafe { llama_token_eos(model) }),
@@ -1243,7 +1290,6 @@ mod detail {
             text.as_ref()
         };
 
-        println!("ggml: {text}");
         match level {
             ggml_log_level_GGML_LOG_LEVEL_ERROR => error!("ggml: {text}"),
             ggml_log_level_GGML_LOG_LEVEL_INFO => info!("ggml: {text}"),

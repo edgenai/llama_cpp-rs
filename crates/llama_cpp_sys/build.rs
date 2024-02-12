@@ -4,6 +4,11 @@ use std::path::{Path, PathBuf};
 use cc::Build;
 use once_cell::sync::Lazy;
 
+// This build file is based on:
+// https://github.com/mdrokz/rust-llama.cpp/blob/master/build.rs
+// License MIT
+// 12-2-2024
+
 #[cfg(all(
     feature = "metal",
     any(
@@ -384,7 +389,7 @@ fn compile_metal(_cx: &mut Build, _cxx: &mut Build) {
     //     .file(LLAMA_PATH.join("ggml-metal.m"));
 }
 
-fn compile_vulkan(cx: &mut Build, cxx: &mut Build) {
+fn compile_vulkan(cx: &mut Build, cxx: &mut Build) -> &'static str {
     println!("Compiling Vulkan GGML..");
     println!("cargo:rerun-if-env-changed=VULKAN_SDK");
 
@@ -408,18 +413,26 @@ fn compile_vulkan(cx: &mut Build, cxx: &mut Build) {
     };
 
     if cfg!(debug_assertions) {
-        cx.define("GGML_VULKAN_CHECK_RESULTS", None)
-            .define("GGML_VULKAN_DEBUG", None)
+        cx.define("GGML_VULKAN_DEBUG", None)
             .define("GGML_VULKAN_VALIDATE", None);
-        cxx.define("GGML_VULKAN_CHECK_RESULTS", None)
-            .define("GGML_VULKAN_DEBUG", None)
+        //.define("GGML_VULKAN_CHECK_RESULTS", None)
+        cxx.define("GGML_VULKAN_DEBUG", None)
             .define("GGML_VULKAN_VALIDATE", None);
+        //.define("GGML_VULKAN_CHECK_RESULTS", None)
     }
 
     cx.define("GGML_USE_VULKAN", None);
-    cxx.include("./thirdparty/Vulkan-Headers/include/")
+    cxx.define("GGML_USE_VULKAN", None);
+
+    let lib_name = "ggml-vulkan";
+
+    cxx.clone()
+        .include("./thirdparty/Vulkan-Headers/include/")
+        .include(LLAMA_PATH.as_path())
         .file(LLAMA_PATH.join("ggml-vulkan.cpp"))
-        .define("GGML_USE_VULKAN", None);
+        .compile(lib_name);
+
+    lib_name
 }
 
 fn compile_ggml(mut cx: Build) {
@@ -461,9 +474,13 @@ fn main() {
 
     let mut ggml_type = String::new();
 
-    if cfg!(feature = "vulkan") {
-        compile_vulkan(&mut cx, &mut cxx);
-    } else if cfg!(feature = "opencl") {
+    let feat_lib = if cfg!(feature = "vulkan") {
+        Some(compile_vulkan(&mut cx, &mut cxx))
+    } else {
+        None
+    };
+
+    if cfg!(feature = "opencl") {
         compile_opencl(&mut cx, &mut cxx);
         ggml_type = "opencl".to_string();
     } else if cfg!(feature = "openblas") {
@@ -503,7 +520,7 @@ fn main() {
 
     #[cfg(feature = "compat")]
     {
-        compat::redefine_symbols(out_path);
+        compat::redefine_symbols(out_path, feat_lib);
     }
 }
 
@@ -514,7 +531,7 @@ mod compat {
 
     use crate::*;
 
-    pub fn redefine_symbols(out_path: impl AsRef<Path>) {
+    pub fn redefine_symbols(out_path: impl AsRef<Path>, additional_lib: Option<&str>) {
         let (ggml_lib_name, llama_lib_name) = lib_names();
         let (nm_name, objcopy_name) = tool_names();
         println!(
@@ -543,6 +560,10 @@ mod compat {
                 Filter {
                     prefix: "ggml",
                     sym_type: 'T',
+                },
+                Filter {
+                    prefix: "ggml",
+                    sym_type: 'U',
                 },
                 Filter {
                     prefix: "ggml",
@@ -622,6 +643,62 @@ mod compat {
                 "An error has occurred while modifying ggml symbols from library file ({})",
                 status
             );
+        }
+
+        if let Some(gpu_lib_name) = additional_lib {
+            // Modifying the symbols of the GPU library
+
+            let lib_name = if cfg!(target_family = "windows") {
+                format!("{gpu_lib_name}.lib")
+            } else if cfg!(target_family = "unix") {
+                format!("lib{gpu_lib_name}.a")
+            } else {
+                println!("cargo:warning=Unknown target family, defaulting to Unix lib names");
+                format!("lib{gpu_lib_name}.a")
+            };
+
+            let output = Command::new(nm_name)
+                .current_dir(&out_path)
+                .arg(&lib_name)
+                .args(["-p", "-P"])
+                .output()
+                .expect("Failed to acquire symbols from the compiled library.");
+            if !output.status.success() {
+                panic!(
+                    "An error has occurred while acquiring symbols from the compiled library ({})",
+                    output.status
+                );
+            }
+            let out_str = String::from_utf8_lossy(&output.stdout);
+            let symbols = get_symbols(
+                &out_str,
+                [
+                    Filter {
+                        prefix: "ggml",
+                        sym_type: 'U',
+                    },
+                    Filter {
+                        prefix: "ggml",
+                        sym_type: 'T',
+                    },
+                ],
+            );
+
+            let mut cmd = Command::new(objcopy_name);
+            cmd.current_dir(&out_path);
+            for symbol in symbols {
+                cmd.arg(format!("--redefine-sym={symbol}=llama_{symbol}"));
+            }
+            let status = cmd
+                .arg(lib_name)
+                .status()
+                .expect("Failed to modify ggml symbols from library file.");
+            if !status.success() {
+                panic!(
+                    "An error has occurred while modifying ggml symbols from library file ({})",
+                    status
+                );
+            }
         }
     }
 
