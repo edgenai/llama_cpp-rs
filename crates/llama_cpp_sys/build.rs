@@ -123,6 +123,7 @@ fn compile_cuda(cxx_flags: &str) {
     }
 
     nvcc.compiler("nvcc")
+        .cuda(true)
         .file(LLAMA_PATH.join("ggml-cuda.cu"))
         .flag("-Wno-pedantic")
         .include(LLAMA_PATH.join("ggml-cuda.h"))
