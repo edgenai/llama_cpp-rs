@@ -86,6 +86,7 @@ use std::{ptr, thread};
 use derive_more::{Deref, DerefMut};
 use futures::executor::block_on;
 use thiserror::Error;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{error, info, trace, warn};
 
@@ -778,7 +779,7 @@ impl LlamaSession {
     /// Starts generating tokens at the end of the context using llama.cpp's built-in Beam search.
     /// TODO fix: beam search keeps going even after it should have ended
     pub fn start_completing(&mut self) -> CompletionHandle {
-        let (tx, rx) = flume::unbounded();
+        let (tx, rx) = unbounded_channel();
         let history_size = self.inner.history_size.load(Ordering::SeqCst);
         let session = self.clone();
 
@@ -811,7 +812,7 @@ impl LlamaSession {
     where
         S: Sampler + Send + Sync + 'static,
     {
-        let (tx, rx) = flume::unbounded();
+        let (tx, rx) = unbounded_channel();
         let history_size = self.inner.history_size.load(Ordering::SeqCst);
         let session = self.clone();
         // TODO deal with 0 history size
@@ -896,20 +897,20 @@ impl LlamaSession {
 /// If this structure is dropped, the off thread is stopped.
 pub struct CompletionHandle {
     /// The token receiver bound to the off thread.
-    rx: flume::Receiver<Token>,
+    rx: UnboundedReceiver<Token>,
 }
 
 impl CompletionHandle {
     /// Blocks the current thread, resolving to the next completed token, or `None` if EOS is
     /// reached.
-    pub fn next_token(&self) -> Option<Token> {
-        self.rx.recv().ok()
+    pub fn next_token(&mut self) -> Option<Token> {
+        block_on(self.rx.recv())
     }
 
     /// Asynchronously yields the current thread, resolving to the next completed token, or `None`
     /// if EOS is reached.
-    pub async fn next_token_async(&self) -> Option<Token> {
-        self.rx.recv_async().await.ok()
+    pub async fn next_token_async(&mut self) -> Option<Token> {
+        self.rx.recv().await
     }
 }
 
@@ -1202,6 +1203,7 @@ mod detail {
 
     use std::ffi::{c_char, c_void, CStr};
     use std::ptr::slice_from_raw_parts;
+    use tokio::sync::mpsc::UnboundedSender;
 
     use tracing::{error, info, trace, warn};
 
@@ -1213,7 +1215,7 @@ mod detail {
     use crate::Token;
 
     pub(crate) struct BeamSearchState {
-        pub(crate) tx: flume::Sender<Token>,
+        pub(crate) tx: UnboundedSender<Token>,
     }
 
     #[no_mangle]
@@ -1226,7 +1228,7 @@ mod detail {
             &mut *(shared_state_ptr as *mut BeamSearchState)
         };
 
-        if shared_state.tx.is_disconnected() {
+        if shared_state.tx.is_closed() {
             // Close all beams to terminate the search.
             for i in 0..beam_state.n_beams {
                 unsafe {

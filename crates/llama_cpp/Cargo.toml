@@ -11,11 +11,10 @@ publish = true
 
 [dependencies]
 derive_more = "0.99.17"
-flume = "0.11.0"
 futures = "0.3.30"
 llama_cpp_sys = { version = "^0.3.0", path = "../llama_cpp_sys", default-features = false }
 num_cpus = "1.16.0"
-thiserror = "1.0.56"
+thiserror = "1.0.57"
 tokio = { workspace = true, features = ["sync", "rt"] }
 tracing = "0.1.40"
 
