@@ -731,7 +731,7 @@ mod compat {
                 panic!("\"{path_str}\" is not a file path.")
             }
 
-            let output = Command::new(&path_str)
+            let output = Command::new(path_str)
                 .arg("--version")
                 .output()
                 .unwrap_or_else(|e| panic!("Failed to run \"{path_str} --version\". ({e})"));

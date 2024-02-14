@@ -494,6 +494,7 @@ impl LlamaModel {
         }
 
         let c_string = unsafe {
+            // SAFETY: llama_token_to_piece should always return a null terminated buffer
             CString::from_vec_with_nul_unchecked(buffer.iter().map(move |x| *x as u8).collect())
         };
         c_string.to_string_lossy().to_string()
