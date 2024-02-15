@@ -646,8 +646,6 @@ mod compat {
     /// [nm]: https://www.man7.org/linux/man-pages/man1/nm.1.html
     /// [objcopy]: https://www.man7.org/linux/man-pages/man1/objcopy.1.html
     fn tools() -> (Tool, Tool) {
-        println!("cargo:rerun-if-env-changed=PATH");
-
         let nm_names;
         let objcopy_names;
         let nm_help;

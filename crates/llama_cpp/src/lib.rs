@@ -95,10 +95,11 @@ use llama_cpp_sys::{
     llama_batch_init, llama_beam_search, llama_context, llama_context_default_params,
     llama_context_params, llama_decode, llama_free, llama_free_model, llama_get_logits_ith,
     llama_load_model_from_file, llama_log_set, llama_model, llama_model_default_params,
-    llama_n_vocab, llama_new_context_with_model, llama_split_mode_LLAMA_SPLIT_NONE,
-    llama_token_bos, llama_token_data, llama_token_data_array, llama_token_eos, llama_token_eot,
-    llama_token_get_text, llama_token_middle, llama_token_nl, llama_token_prefix,
-    llama_token_suffix, llama_token_to_piece, llama_tokenize,
+    llama_model_params, llama_n_vocab, llama_new_context_with_model, llama_split_mode,
+    llama_split_mode_LLAMA_SPLIT_LAYER, llama_split_mode_LLAMA_SPLIT_NONE,
+    llama_split_mode_LLAMA_SPLIT_ROW, llama_token_bos, llama_token_data, llama_token_data_array,
+    llama_token_eos, llama_token_eot, llama_token_get_text, llama_token_middle, llama_token_nl,
+    llama_token_prefix, llama_token_suffix, llama_token_to_piece, llama_tokenize,
 };
 
 /// The standard sampler implementation.
@@ -313,7 +314,7 @@ impl LlamaModel {
     /// [tracing]: https://docs.rs/tracing/latest/tracing/
     pub fn load_from_file(
         file_path: impl AsRef<Path>,
-        _model_params: LlamaParams,
+        model_params: LlamaParams,
     ) -> Result<Self, LlamaLoadError> {
         let backend_ref = block_on(BackendRef::new());
         info!("Loading model \"{}\"", file_path.as_ref().to_string_lossy());
@@ -323,13 +324,6 @@ impl LlamaModel {
         if !file_path.exists() {
             return Err(LlamaLoadError::DoesNotExist(file_path.into()));
         }
-
-        let mut params = unsafe { llama_model_default_params() };
-        params.split_mode = llama_split_mode_LLAMA_SPLIT_NONE;
-        params.n_gpu_layers = 999;
-        // params.main_gpu = 1;
-
-        // TODO create params from model_params
 
         let model = unsafe {
             // SAFETY: Assume that llama.cpp will gracefully fail and return `nullptr` if
@@ -345,7 +339,7 @@ impl LlamaModel {
                         )
                     })
                     .as_ptr(),
-                params,
+                model_params.into(),
             )
         };
 
@@ -917,42 +911,109 @@ impl CompletionHandle {
 
 /// Parameters for llama.
 pub struct LlamaParams {
-    /// number of layers to store in VRAM
+    /// Number of layers to store in VRAM.
+    ///
+    /// If this number is bigger than the amount of model layers, all layers are loaded to VRAM.
     pub n_gpu_layers: u32,
 
-    /// the GPU that is used for scratch and small tensors
+    /// How to split the model across multiple GPUs
+    pub split_mode: SplitMode,
+
+    /// The GPU that is used for scratch and small tensors
     pub main_gpu: u32,
 
-    /// how to split layers across multiple GPUs (size: LLAMA_MAX_DEVICES)
+    /// How to split layers across multiple GPUs (size: LLAMA_MAX_DEVICES)
     //const float * tensor_split, TODO
 
-    /// called with a progress value between 0 and 1, pass NULL to disable
+    /// Called with a progress value between 0 and 1, pass NULL to disable
     //llama_progress_callback progress_callback, TODO
 
-    /// context pointer passed to the progress callback
+    /// Context pointer passed to the progress callback
     //void * progress_callback_user_data, TODO
 
-    /// override key-value pairs of the model meta data
+    /// Override key-value pairs of the model meta data
     //const struct llama_model_kv_override * kv_overrides, TODO
 
-    /// only load the vocabulary, no weights
+    /// Only load the vocabulary, no weights
     pub vocab_only: bool,
 
-    /// use mmap if possible
+    /// Use mmap if possible
     pub use_mmap: bool,
 
-    /// force system to keep model in RAM
+    /// Force system to keep model in RAM
     pub use_mlock: bool,
+}
+
+/// A policy to split the model across multiple GPUs
+#[non_exhaustive]
+pub enum SplitMode {
+    /// Single GPU.
+    ///
+    /// Equivalent to [`llama_split_mode_LLAMA_SPLIT_NONE`]
+    None,
+
+    /// Split layers and KV across GPUs
+    ///
+    /// Equivalent to [`llama_split_mode_LLAMA_SPLIT_LAYER`]
+    Layer,
+
+    /// Split rows across GPUs
+    ///
+    /// Equivalent to [`llama_split_mode_LLAMA_SPLIT_ROW`]
+    Row,
+}
+
+impl From<SplitMode> for llama_split_mode {
+    fn from(value: SplitMode) -> Self {
+        match value {
+            SplitMode::None => llama_split_mode_LLAMA_SPLIT_NONE,
+            SplitMode::Layer => llama_split_mode_LLAMA_SPLIT_LAYER,
+            SplitMode::Row => llama_split_mode_LLAMA_SPLIT_ROW,
+        }
+    }
+}
+
+impl From<llama_split_mode> for SplitMode {
+    fn from(value: llama_split_mode) -> Self {
+        #![allow(non_upper_case_globals)]
+        match value {
+            llama_split_mode_LLAMA_SPLIT_NONE => SplitMode::None,
+            llama_split_mode_LLAMA_SPLIT_LAYER => SplitMode::Layer,
+            llama_split_mode_LLAMA_SPLIT_ROW => SplitMode::Row,
+            _ => unimplemented!(),
+        }
+    }
 }
 
 impl Default for LlamaParams {
     fn default() -> Self {
+        // SAFETY: Stack constructor, always safe
+        let c_params = unsafe { llama_model_default_params() };
+
         Self {
-            n_gpu_layers: 0,
-            main_gpu: 0,
-            vocab_only: false,
-            use_mmap: true,
-            use_mlock: false,
+            n_gpu_layers: c_params.n_gpu_layers as u32,
+            split_mode: c_params.split_mode.into(),
+            main_gpu: c_params.main_gpu as u32,
+            vocab_only: c_params.vocab_only,
+            use_mmap: c_params.use_mmap,
+            use_mlock: c_params.use_mlock,
+        }
+    }
+}
+
+impl From<LlamaParams> for llama_model_params {
+    fn from(value: LlamaParams) -> Self {
+        llama_model_params {
+            n_gpu_layers: value.n_gpu_layers as i32,
+            split_mode: value.split_mode.into(),
+            main_gpu: value.main_gpu as i32,
+            tensor_split: ptr::null_mut(),
+            progress_callback: None,
+            progress_callback_user_data: ptr::null_mut(),
+            kv_overrides: ptr::null_mut(),
+            vocab_only: value.vocab_only,
+            use_mmap: value.use_mmap,
+            use_mlock: value.use_mlock,
         }
     }
 }
@@ -1020,7 +1081,7 @@ impl Default for SessionParams {
             llama_context_default_params()
         };
 
-        let threads = num_cpus::get_physical() as u32;
+        let threads = num_cpus::get_physical() as u32 - 1;
 
         Self {
             seed: c_defaults.seed,
@@ -1061,7 +1122,7 @@ impl From<SessionParams> for llama_context_params {
             yarn_beta_slow: value.yarn_beta_slow,
             yarn_orig_ctx: value.yarn_orig_ctx,
             cb_eval: None,
-            cb_eval_user_data: std::ptr::null_mut(),
+            cb_eval_user_data: ptr::null_mut(),
             type_k: value.type_k as ggml_type,
             type_v: value.type_v as ggml_type,
             mul_mat_q: true,   // Deprecated
@@ -1204,8 +1265,8 @@ mod detail {
 
     use std::ffi::{c_char, c_void, CStr};
     use std::ptr::slice_from_raw_parts;
-    use tokio::sync::mpsc::UnboundedSender;
 
+    use tokio::sync::mpsc::UnboundedSender;
     use tracing::{error, info, trace, warn};
 
     use llama_cpp_sys::{
