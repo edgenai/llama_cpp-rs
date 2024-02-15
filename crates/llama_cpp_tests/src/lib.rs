@@ -67,7 +67,13 @@ mod tests {
         let models = list_models().await;
 
         for model in models {
-            let model = LlamaModel::load_from_file_async(model, LlamaParams::default())
+            let mut params = LlamaParams::default();
+
+            if cfg!(any(feature = "vulkan", feature = "cuda", feature = "metal")) {
+                params.n_gpu_layers = u32::MAX;
+            }
+
+            let model = LlamaModel::load_from_file_async(model, params)
                 .await
                 .expect("Failed to load model");
 
