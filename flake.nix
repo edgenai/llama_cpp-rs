@@ -59,7 +59,7 @@
           pkg-config
         ];
 
-        devInputs = clangBuildInputs ++ nativeBuildInputs ++ (with pkgs; [ nixfmt openssl vulkan-loader vulkan-headers ]);
+        devInputs = clangBuildInputs ++ nativeBuildInputs ++ (with pkgs; [ nixfmt openssl vulkan-loader ]);
 
         stdenv = pkgs.stdenv;
         lib = pkgs.lib;

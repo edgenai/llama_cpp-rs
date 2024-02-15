@@ -275,118 +275,140 @@ fn push_feature_flags(cx: &mut Build, cxx: &mut Build) {
     }
 }
 
-fn compile_opencl(_cx: &mut Build, _cxx: &mut Build) {
+fn compile_opencl(cx: &mut Build, cxx: &mut Build) {
     println!("Compiling OpenCL GGML..");
 
-    todo!();
+    // TODO
+    println!("cargo:warning=OpenCL compilation and execution has not been properly tested yet");
 
-    // cx.flag("-DGGML_USE_CLBLAST");
-    // cxx.flag("-DGGML_USE_CLBLAST");
-    //
-    // if cfg!(target_os = "linux") {
-    //     println!("cargo:rustc-link-lib=OpenCL");
-    //     println!("cargo:rustc-link-lib=clblast");
-    // } else if cfg!(target_os = "macos") {
-    //     println!("cargo:rustc-link-lib=framework=OpenCL");
-    //     println!("cargo:rustc-link-lib=clblast");
-    // }
-    //
-    // cxx.file("./llama.cpp/ggml-opencl.cpp");
+    cx.define("GGML_USE_CLBLAST", None);
+    cxx.define("GGML_USE_CLBLAST", None);
+
+    if cfg!(target_os = "linux") {
+        println!("cargo:rustc-link-lib=OpenCL");
+        println!("cargo:rustc-link-lib=clblast");
+    } else if cfg!(target_os = "macos") {
+        println!("cargo:rustc-link-lib=framework=OpenCL");
+        println!("cargo:rustc-link-lib=clblast");
+    }
+
+    cxx.file(LLAMA_PATH.join("ggml-opencl.cpp"));
 }
 
-fn compile_openblas(_cx: &mut Build) {
+fn compile_openblas(cx: &mut Build) {
     println!("Compiling OpenBLAS GGML..");
 
-    todo!();
+    // TODO
+    println!("cargo:warning=OpenBlas compilation and execution has not been properly tested yet");
 
-    // cx.flag("-DGGML_USE_OPENBLAS")
-    //     .include("/usr/local/include/openblas")
-    //     .include("/usr/local/include/openblas");
-    // println!("cargo:rustc-link-lib=openblas");
+    cx.define("GGML_USE_OPENBLAS", None)
+        .include("/usr/local/include/openblas")
+        .include("/usr/local/include/openblas");
+    println!("cargo:rustc-link-lib=openblas");
 }
 
-fn compile_blis(_cx: &mut Build) {
+fn compile_blis(cx: &mut Build) {
     println!("Compiling BLIS GGML..");
 
-    todo!();
+    // TODO
+    println!("cargo:warning=Blis compilation and execution has not been properly tested yet");
 
-    // cx.flag("-DGGML_USE_OPENBLAS")
-    //     .include("/usr/local/include/blis")
-    //     .include("/usr/local/include/blis");
-    // println!("cargo:rustc-link-search=native=/usr/local/lib");
-    // println!("cargo:rustc-link-lib=blis");
+    cx.define("GGML_USE_OPENBLAS", None)
+        .include("/usr/local/include/blis")
+        .include("/usr/local/include/blis");
+    println!("cargo:rustc-link-search=native=/usr/local/lib");
+    println!("cargo:rustc-link-lib=blis");
 }
 
-fn _compile_cuda(_cxx_flags: &str) {
+fn compile_cuda(cx: &mut Build, cxx: &mut Build) -> &'static str {
     println!("Compiling CUDA GGML..");
 
-    todo!();
+    // TODO
+    println!("cargo:warning=CUDA compilation and execution has not been properly tested yet");
 
-    // println!("cargo:rustc-link-search=native=/usr/local/cuda/lib64");
-    // println!("cargo:rustc-link-search=native=/opt/cuda/lib64");
-    //
-    // if let Ok(cuda_path) = std::env::var("CUDA_PATH") {
-    //     println!(
-    //         "cargo:rustc-link-search=native={}/targets/x86_64-linux/lib",
-    //         cuda_path
-    //     );
-    // }
-    //
-    // let libs = "cublas culibos cudart cublasLt pthread dl rt";
-    //
-    // for lib in libs.split_whitespace() {
-    //     println!("cargo:rustc-link-lib={}", lib);
-    // }
-    //
-    // let mut nvcc = cc::Build::new();
-    //
-    // let env_flags = vec![
-    //     ("LLAMA_CUDA_DMMV_X=32", "-DGGML_CUDA_DMMV_X"),
-    //     ("LLAMA_CUDA_DMMV_Y=1", "-DGGML_CUDA_DMMV_Y"),
-    //     ("LLAMA_CUDA_KQUANTS_ITER=2", "-DK_QUANTS_PER_ITERATION"),
-    // ];
-    //
-    // let nvcc_flags = "--forward-unknown-to-host-compiler -arch=native ";
-    //
-    // for nvcc_flag in nvcc_flags.split_whitespace() {
-    //     nvcc.flag(nvcc_flag);
-    // }
-    //
-    // for cxx_flag in cxx_flags.split_whitespace() {
-    //     nvcc.flag(cxx_flag);
-    // }
-    //
-    // for env_flag in env_flags {
-    //     let mut flag_split = env_flag.0.split("=");
-    //     if let Ok(val) = std::env::var(flag_split.next().unwrap()) {
-    //         nvcc.flag(&format!("{}={}", env_flag.1, val));
-    //     } else {
-    //         nvcc.flag(&format!("{}={}", env_flag.1, flag_split.next().unwrap()));
-    //     }
-    // }
-    //
-    // nvcc.compiler("nvcc")
-    //     .file(LLAMA_PATH.join("ggml-cuda.cu"))
-    //     .flag("-Wno-pedantic")
-    //     .include(LLAMA_PATH.join("ggml-cuda.h"))
-    //     .compile("ggml-cuda");
+    cx.define("GGML_USE_CUBLAS", None);
+    cxx.define("GGML_USE_CUBLAS", None);
+
+    cx.include("/usr/local/cuda/include")
+        .include("/opt/cuda/include");
+    cxx.include("/usr/local/cuda/include")
+        .include("/opt/cuda/include");
+
+    if let Ok(cuda_path) = std::env::var("CUDA_PATH") {
+        cx.include(format!("{}/targets/x86_64-linux/include", cuda_path));
+        cxx.include(format!("{}/targets/x86_64-linux/include", cuda_path));
+    }
+
+    println!("cargo:rustc-link-search=native=/usr/local/cuda/lib64");
+    println!("cargo:rustc-link-search=native=/opt/cuda/lib64");
+
+    if let Ok(cuda_path) = std::env::var("CUDA_PATH") {
+        println!(
+            "cargo:rustc-link-search=native={}/targets/x86_64-linux/lib",
+            cuda_path
+        );
+    }
+
+    let libs = "cublas culibos cudart cublasLt pthread dl rt";
+
+    for lib in libs.split_whitespace() {
+        println!("cargo:rustc-link-lib={}", lib);
+    }
+
+    let mut nvcc = cxx.clone();
+
+    let env_flags = vec![
+        ("LLAMA_CUDA_DMMV_X=32", "-DGGML_CUDA_DMMV_X"),
+        ("LLAMA_CUDA_DMMV_Y=1", "-DGGML_CUDA_DMMV_Y"),
+        ("LLAMA_CUDA_KQUANTS_ITER=2", "-DK_QUANTS_PER_ITERATION"),
+    ];
+
+    let nvcc_flags = "--forward-unknown-to-host-compiler -arch=native ";
+
+    for nvcc_flag in nvcc_flags.split_whitespace() {
+        nvcc.flag(nvcc_flag);
+    }
+
+    for env_flag in env_flags {
+        let mut flag_split = env_flag.0.split("=");
+        if let Ok(val) = std::env::var(flag_split.next().unwrap()) {
+            nvcc.flag(&format!("{}={}", env_flag.1, val));
+        } else {
+            nvcc.flag(&format!("{}={}", env_flag.1, flag_split.next().unwrap()));
+        }
+    }
+
+    let lib_name = "ggml-cuda";
+
+    nvcc.compiler("nvcc")
+        .file(LLAMA_PATH.join("ggml-cuda.cu"))
+        .flag("-Wno-pedantic")
+        .include(LLAMA_PATH.join("ggml-cuda.h"))
+        .compile(lib_name);
+
+    lib_name
 }
 
-fn compile_metal(_cx: &mut Build, _cxx: &mut Build) {
+fn compile_metal(cx: &mut Build, cxx: &mut Build) {
     println!("Compiling Metal GGML..");
 
-    todo!();
+    // TODO
+    println!("cargo:warning=Metal compilation and execution has not been properly tested yet");
 
-    // cx.flag("-DGGML_USE_METAL").flag("-DGGML_METAL_NDEBUG");
-    // cxx.flag("-DGGML_USE_METAL");
-    //
-    // println!("cargo:rustc-link-lib=framework=Metal");
-    // println!("cargo:rustc-link-lib=framework=Foundation");
-    // println!("cargo:rustc-link-lib=framework=MetalPerformanceShaders");
-    // println!("cargo:rustc-link-lib=framework=MetalKit");
-    //
-    // cx.include(LLAMA_PATH.join("ggml-metal.h"))
-    //     .file(LLAMA_PATH.join("ggml-metal.m"));
+    cx.define("GGML_USE_METAL", None);
+    cxx.define("GGML_USE_METAL", None);
+
+    if !cfg!(debug_assertions) {
+        cx.define("GGML_METAL_NDEBUG", None);
+    }
+
+    println!("cargo:rustc-link-lib=framework=Metal");
+    println!("cargo:rustc-link-lib=framework=Foundation");
+    println!("cargo:rustc-link-lib=framework=MetalPerformanceShaders");
+    println!("cargo:rustc-link-lib=framework=MetalKit");
+
+    cx.include(LLAMA_PATH.join("ggml-metal.h"))
+        .file(LLAMA_PATH.join("ggml-metal.m"));
 }
 
 fn compile_vulkan(cx: &mut Build, cxx: &mut Build) -> &'static str {
@@ -409,6 +431,7 @@ fn compile_vulkan(cx: &mut Build, cxx: &mut Build) -> &'static str {
         println!("cargo:rustc-link-search={sdk_path}/{lib_folder}");
         println!("cargo:rustc-link-lib={lib_name}");
     } else {
+        // TODO have local copy of vulkan lib?
         todo!()
     };
 
@@ -445,7 +468,7 @@ fn compile_ggml(mut cx: Build) {
         .compile("ggml");
 }
 
-fn compile_llama(mut cxx: Build, _out_path: impl AsRef<Path>, _ggml_type: &str) {
+fn compile_llama(mut cxx: Build, _out_path: impl AsRef<Path>) {
     println!("Compiling Llama.cpp..");
     cxx.include(LLAMA_PATH.as_path())
         .file(LLAMA_PATH.join("llama.cpp"))
@@ -472,51 +495,28 @@ fn main() {
     push_common_flags(&mut cx, &mut cxx);
     push_feature_flags(&mut cx, &mut cxx);
 
-    let mut ggml_type = String::new();
-
     let feat_lib = if cfg!(feature = "vulkan") {
         Some(compile_vulkan(&mut cx, &mut cxx))
+    } else if cfg!(feature = "cuda") {
+        Some(compile_cuda(&mut cx, &mut cxx))
+    } else if cfg!(feature = "opencl") {
+        compile_opencl(&mut cx, &mut cxx);
+        None
+    } else if cfg!(feature = "openblas") {
+        compile_openblas(&mut cx);
+        None
+    } else if cfg!(feature = "blis") {
+        compile_blis(&mut cx);
+        None
+    } else if cfg!(feature = "metal") && cfg!(target_os = "macos") {
+        compile_metal(&mut cx, &mut cxx);
+        None
     } else {
         None
     };
 
-    if cfg!(feature = "opencl") {
-        compile_opencl(&mut cx, &mut cxx);
-        ggml_type = "opencl".to_string();
-    } else if cfg!(feature = "openblas") {
-        compile_openblas(&mut cx);
-    } else if cfg!(feature = "blis") {
-        compile_blis(&mut cx);
-    } else if cfg!(feature = "metal") && cfg!(target_os = "macos") {
-        compile_metal(&mut cx, &mut cxx);
-        ggml_type = "metal".to_string();
-    }
-
-    if cfg!(feature = "cuda") {
-        todo!()
-
-        // cx_flags.push("-DGGML_USE_CUBLAS");
-        // cxx_flags.push("-DGGML_USE_CUBLAS");
-        //
-        // cx.include("/usr/local/cuda/include")
-        //     .include("/opt/cuda/include");
-        // cxx.include("/usr/local/cuda/include")
-        //     .include("/opt/cuda/include");
-        //
-        // if let Ok(cuda_path) = std::env::var("CUDA_PATH") {
-        //     cx.include(format!("{}/targets/x86_64-linux/include", cuda_path));
-        //     cxx.include(format!("{}/targets/x86_64-linux/include", cuda_path));
-        // }
-        //
-        // compile_ggml(&mut cx, &cx_flags);
-        //
-        // compile_cuda(&cxx_flags);
-        //
-        // compile_llama(&mut cxx, &cxx_flags, &out_path, "cuda");
-    } else {
-        compile_ggml(cx);
-        compile_llama(cxx, &out_path, &ggml_type);
-    }
+    compile_ggml(cx);
+    compile_llama(cxx, &out_path);
 
     #[cfg(feature = "compat")]
     {
