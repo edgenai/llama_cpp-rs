@@ -90,7 +90,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            let completions = session.start_completing_with(StandardSampler::default(), 1024);
+            let mut completions = session.start_completing_with(StandardSampler::default(), 1024);
             let timeout_by = Instant::now() + Duration::from_secs(500);
 
             println!();

@@ -123,42 +123,6 @@ fn push_common_flags(cx: &mut Build, cxx: &mut Build) {
         }
     }
 
-    if cfg!(target_family = "unix") {
-        cx.flag("-pthread")
-            .flag("-Wall")
-            .flag("-Wextra")
-            .flag("-Wpedantic")
-            .flag("-Wcast-qual")
-            .flag("-Wdouble-promotion")
-            .flag("-Wshadow")
-            .flag("-Wstrict-prototypes")
-            .flag("-Wpointer-arith");
-        cxx.flag("-fPIC")
-            .flag("-pthread")
-            .flag("-Wall")
-            .flag("-Wdeprecated-declarations")
-            .flag("-Wextra")
-            .flag("-Wpedantic")
-            .flag("-Wcast-qual")
-            .flag("-Wno-unused-function")
-            .flag("-Wno-multichar");
-    } else if cfg!(target_family = "windows") {
-        cx.flag("/W4")
-            .flag("/Wall")
-            .flag("/wd4820")
-            .flag("/wd4710")
-            .flag("/wd4711")
-            .flag("/wd4820")
-            .flag("/wd4514");
-        cxx.flag("/W4")
-            .flag("/Wall")
-            .flag("/wd4820")
-            .flag("/wd4710")
-            .flag("/wd4711")
-            .flag("/wd4820")
-            .flag("/wd4514");
-    }
-
     if cfg!(target_os = "openbsd") {
         cx.define("_XOPEN_SOURCE", "700");
         cxx.define("_XOPEN_SOURCE", "700");
@@ -202,6 +166,45 @@ fn push_common_flags(cx: &mut Build, cxx: &mut Build) {
                 .define("__ARM_FEATURE_DOTPROD", None)
                 .define("__aarch64__", None);
         }
+    }
+}
+
+/// Add platform appropriate flags and definitions for compilation warnings.
+fn push_warn_flags(cx: &mut Build, cxx: &mut Build) {
+    if cfg!(target_family = "unix") {
+        cx.flag("-pthread")
+            .flag("-Wall")
+            .flag("-Wextra")
+            .flag("-Wpedantic")
+            .flag("-Wcast-qual")
+            .flag("-Wdouble-promotion")
+            .flag("-Wshadow")
+            .flag("-Wstrict-prototypes")
+            .flag("-Wpointer-arith");
+        cxx.flag("-fPIC")
+            .flag("-pthread")
+            .flag("-Wall")
+            .flag("-Wdeprecated-declarations")
+            .flag("-Wextra")
+            .flag("-Wpedantic")
+            .flag("-Wcast-qual")
+            .flag("-Wno-unused-function")
+            .flag("-Wno-multichar");
+    } else if cfg!(target_family = "windows") {
+        cx.flag("/W4")
+            .flag("/Wall")
+            .flag("/wd4820")
+            .flag("/wd4710")
+            .flag("/wd4711")
+            .flag("/wd4820")
+            .flag("/wd4514");
+        cxx.flag("/W4")
+            .flag("/Wall")
+            .flag("/wd4820")
+            .flag("/wd4710")
+            .flag("/wd4711")
+            .flag("/wd4820")
+            .flag("/wd4514");
     }
 }
 
@@ -320,69 +323,79 @@ fn compile_blis(cx: &mut Build) {
     println!("cargo:rustc-link-lib=blis");
 }
 
-fn compile_cuda(cx: &mut Build, cxx: &mut Build) -> &'static str {
+fn compile_cuda(cx: &mut Build, cxx: &mut Build, featless_cxx: Build) -> &'static str {
     println!("Compiling CUDA GGML..");
 
-    // TODO
-    println!("cargo:warning=CUDA compilation and execution has not been properly tested yet");
+    println!("cargo:rerun-if-env-changed=CUDA_PATH");
 
     cx.define("GGML_USE_CUBLAS", None);
     cxx.define("GGML_USE_CUBLAS", None);
 
-    cx.include("/usr/local/cuda/include")
-        .include("/opt/cuda/include");
-    cxx.include("/usr/local/cuda/include")
-        .include("/opt/cuda/include");
+    let mut nvcc = featless_cxx;
+    nvcc.cuda(true)
+        .cudart("static")
+        .flag("--forward-unknown-to-host-compiler")
+        .flag("-arch=native")
+        .define("K_QUANTS_PER_ITERATION", Some("2"))
+        .define("GGML_CUDA_PEER_MAX_BATCH_SIZE", Some("128"));
 
-    if let Ok(cuda_path) = std::env::var("CUDA_PATH") {
-        cx.include(format!("{}/targets/x86_64-linux/include", cuda_path));
-        cxx.include(format!("{}/targets/x86_64-linux/include", cuda_path));
+    if cfg!(target_family = "windows") {
+        if let Ok(cuda_path) = std::env::var("CUDA_PATH") {
+            let cuda_path = PathBuf::from(cuda_path);
+
+            let cuda_include = cuda_path.join("include");
+            let cuda_include = cuda_include.display();
+            let cuda_lib = cuda_path.join("lib").join("x64");
+            let cuda_lib = cuda_lib.display();
+
+            cx.include(format!("{}", cuda_include));
+            cxx.include(format!("{}", cuda_include));
+            println!("cargo:rustc-link-search=native={}", cuda_lib);
+        }
+    } else {
+        cx.include("/usr/local/cuda/include")
+            .include("/opt/cuda/include");
+        cxx.include("/usr/local/cuda/include")
+            .include("/opt/cuda/include");
+
+        if let Ok(cuda_path) = std::env::var("CUDA_PATH") {
+            cx.include(format!("{}/targets/x86_64-linux/include", cuda_path));
+            cxx.include(format!("{}/targets/x86_64-linux/include", cuda_path));
+            println!(
+                "cargo:rustc-link-search=native={}/targets/x86_64-linux/lib",
+                cuda_path
+            );
+        }
+
+        println!("cargo:rustc-link-search=native=/usr/local/cuda/lib64");
+        println!("cargo:rustc-link-search=native=/opt/cuda/lib64");
+
+        nvcc.flag("-Wno-pedantic");
     }
 
-    println!("cargo:rustc-link-search=native=/usr/local/cuda/lib64");
-    println!("cargo:rustc-link-search=native=/opt/cuda/lib64");
-
-    if let Ok(cuda_path) = std::env::var("CUDA_PATH") {
-        println!(
-            "cargo:rustc-link-search=native={}/targets/x86_64-linux/lib",
-            cuda_path
-        );
-    }
-
-    let libs = "cublas culibos cudart cublasLt pthread dl rt";
+    let libs = if cfg!(target_os = "linux") {
+        "cublas culibos cudart cublasLt pthread dl rt"
+    } else {
+        "cuda cublas cudart cublasLt"
+    };
 
     for lib in libs.split_whitespace() {
         println!("cargo:rustc-link-lib={}", lib);
     }
 
-    let mut nvcc = cxx.clone();
-
-    let env_flags = vec![
-        ("LLAMA_CUDA_DMMV_X=32", "-DGGML_CUDA_DMMV_X"),
-        ("LLAMA_CUDA_DMMV_Y=1", "-DGGML_CUDA_DMMV_Y"),
-        ("LLAMA_CUDA_KQUANTS_ITER=2", "-DK_QUANTS_PER_ITERATION"),
-    ];
-
-    let nvcc_flags = "--forward-unknown-to-host-compiler -arch=native ";
-
-    for nvcc_flag in nvcc_flags.split_whitespace() {
-        nvcc.flag(nvcc_flag);
+    if cfg!(feature = "cuda_dmmv") {
+        nvcc.define("GGML_CUDA_FORCE_DMMV", None)
+            .define("GGML_CUDA_DMMV_X", Some("32"))
+            .define("GGML_CUDA_MMV_Y", Some("1"));
     }
 
-    for env_flag in env_flags {
-        let mut flag_split = env_flag.0.split("=");
-        if let Ok(val) = std::env::var(flag_split.next().unwrap()) {
-            nvcc.flag(&format!("{}={}", env_flag.1, val));
-        } else {
-            nvcc.flag(&format!("{}={}", env_flag.1, flag_split.next().unwrap()));
-        }
+    if cfg!(feature = "cuda_mmq") {
+        nvcc.define("GGML_CUDA_FORCE_MMQ", None);
     }
 
     let lib_name = "ggml-cuda";
 
-    nvcc.compiler("nvcc")
-        .file(LLAMA_PATH.join("ggml-cuda.cu"))
-        .flag("-Wno-pedantic")
+    nvcc.file(LLAMA_PATH.join("ggml-cuda.cu"))
         .include(LLAMA_PATH.join("ggml-cuda.h"))
         .compile(lib_name);
 
@@ -479,13 +492,13 @@ fn main() {
     if std::fs::read_dir(LLAMA_PATH.as_path()).is_err() {
         panic!(
             "Could not find {}. Did you forget to initialize submodules?",
-            LLAMA_PATH.to_string_lossy()
+            LLAMA_PATH.display()
         );
     }
 
     let out_path = PathBuf::from(env::var("OUT_DIR").expect("No out dir found"));
 
-    println!("cargo:rerun-if-changed={}", LLAMA_PATH.to_string_lossy());
+    println!("cargo:rerun-if-changed={}", LLAMA_PATH.display());
 
     compile_bindings(&out_path);
 
@@ -493,12 +506,16 @@ fn main() {
     let mut cxx = Build::new();
 
     push_common_flags(&mut cx, &mut cxx);
+
+    let featless_cxx = cxx.clone(); // mostly used for CUDA
+
+    push_warn_flags(&mut cx, &mut cxx);
     push_feature_flags(&mut cx, &mut cxx);
 
     let feat_lib = if cfg!(feature = "vulkan") {
         Some(compile_vulkan(&mut cx, &mut cxx))
     } else if cfg!(feature = "cuda") {
-        Some(compile_cuda(&mut cx, &mut cxx))
+        Some(compile_cuda(&mut cx, &mut cxx, featless_cxx))
     } else if cfg!(feature = "opencl") {
         compile_opencl(&mut cx, &mut cxx);
         None
@@ -679,7 +696,7 @@ mod compat {
         println!("Looking for \"nm\" or an equivalent tool");
         let nm_name = find_tool(&nm_names, nm_env).unwrap_or_else(move || {
             panic_tool_help("nm", nm_env, &nm_help);
-            unreachable!()
+            unreachable!("The function above should have panicked")
         });
 
         let objcopy_env = "OBJCOPY_PATH";
@@ -687,7 +704,7 @@ mod compat {
         println!("Looking for \"objcopy\" or an equivalent tool..");
         let objcopy_name = find_tool(&objcopy_names, objcopy_env).unwrap_or_else(move || {
             panic_tool_help("objcopy", objcopy_env, &objcopy_help);
-            unreachable!()
+            unreachable!("The function above should have panicked")
         });
 
         (nm_name, objcopy_name)
@@ -706,7 +723,7 @@ mod compat {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             match self {
                 Tool::Name(name) => write!(f, "{}", name),
-                Tool::FullPath(path) => write!(f, "{}", path.to_string_lossy()),
+                Tool::FullPath(path) => write!(f, "{}", path.display()),
             }
         }
     }
@@ -875,4 +892,9 @@ mod compat {
         // Filter duplicates
         HashSet::from_iter(iter)
     }
+}
+
+#[cfg(feature = "cuda")]
+mod cuda {
+    //
 }
