@@ -837,8 +837,3 @@ mod compat {
         HashSet::from_iter(iter)
     }
 }
-
-#[cfg(feature = "cuda")]
-mod cuda {
-    //
-}

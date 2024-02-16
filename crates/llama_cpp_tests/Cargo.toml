@@ -8,3 +8,7 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 llama_cpp = { version = "^0.3.0", path = "../llama_cpp", default-features = false, features = ["native", "compat"] }
 tokio = { workspace = true, features = ["full"] }
+
+[features]
+vulkan = ["llama_cpp/vulkan"]
+cuda = ["llama_cpp/cuda"]
