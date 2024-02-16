@@ -4,33 +4,87 @@ use std::path::{Path, PathBuf};
 use cc::Build;
 use once_cell::sync::Lazy;
 
-#[cfg(all(feature = "metal", feature = "cuda"))]
-compile_error!("feature \"metal\" and feature \"cuda\" cannot be enabled at the same time");
-#[cfg(all(feature = "metal", feature = "blas"))]
-compile_error!("feature \"metal\" and feature \"hipblas\" cannot be enabled at the same time");
-#[cfg(all(feature = "metal", feature = "blas"))]
-compile_error!("feature \"metal\" and feature \"hipblas\" cannot be enabled at the same time");
-#[cfg(all(feature = "metal", feature = "clblast"))]
-compile_error!("feature \"metal\" and feature \"clblast\" cannot be enabled at the same time");
+// This build file is based on:
+// https://github.com/mdrokz/rust-llama.cpp/blob/master/build.rs
+// License MIT
+// 12-2-2024
 
-#[cfg(all(feature = "cuda", feature = "blas"))]
-compile_error!("feature \"metal\" and feature \"blas\" cannot be enabled at the same time");
-#[cfg(all(feature = "cuda", feature = "hipblas"))]
-compile_error!("feature \"cuda\" and feature \"hipblas\" cannot be enabled at the same time");
-#[cfg(all(feature = "cuda", feature = "clblast"))]
-compile_error!("feature \"cuda\" and feature \"clblast\" cannot be enabled at the same time");
+#[cfg(all(
+    feature = "metal",
+    any(
+        feature = "cuda",
+        feature = "blas",
+        feature = "hipblas",
+        feature = "clblast",
+        feature = "vulkan"
+    )
+))]
+compile_error!("feature \"metal\" cannot be enabled alongside other GPU based features");
 
-#[cfg(all(feature = "hipblas", feature = "blas"))]
-compile_error!("feature \"hipblas\" and feature \"blas\" cannot be enabled at the same time");
-#[cfg(all(feature = "hipblas", feature = "clblast"))]
-compile_error!("feature \"hipblas\" and feature \"clblast\" cannot be enabled at the same time");
+#[cfg(all(
+    feature = "cuda",
+    any(
+        feature = "metal",
+        feature = "blas",
+        feature = "hipblas",
+        feature = "clblast",
+        feature = "vulkan"
+    )
+))]
+compile_error!("feature \"cuda\" cannot be enabled alongside other GPU based features");
 
-#[cfg(all(feature = "blas", feature = "clblast"))]
-compile_error!("feature \"blas\" and feature \"clblast\" cannot be enabled at the same time");
+#[cfg(all(
+    feature = "blas",
+    any(
+        feature = "cuda",
+        feature = "metal",
+        feature = "hipblas",
+        feature = "clblast",
+        feature = "vulkan"
+    )
+))]
+compile_error!("feature \"blas\" cannot be enabled alongside other GPU based features");
+
+#[cfg(all(
+    feature = "hipblas",
+    any(
+        feature = "cuda",
+        feature = "blas",
+        feature = "metal",
+        feature = "clblast",
+        feature = "vulkan"
+    )
+))]
+compile_error!("feature \"hipblas\" cannot be enabled alongside other GPU based features");
+
+#[cfg(all(
+    feature = "clblast",
+    any(
+        feature = "cuda",
+        feature = "blas",
+        feature = "hipblas",
+        feature = "metal",
+        feature = "vulkan"
+    )
+))]
+compile_error!("feature \"clblas\" cannot be enabled alongside other GPU based features");
+
+#[cfg(all(
+    feature = "vulkan",
+    any(
+        feature = "cuda",
+        feature = "blas",
+        feature = "hipblas",
+        feature = "clblast",
+        feature = "metal"
+    )
+))]
+compile_error!("feature \"vulkan\" cannot be enabled alongside other GPU based features");
 
 static LLAMA_PATH: Lazy<PathBuf> = Lazy::new(|| PathBuf::from("./thirdparty/llama.cpp"));
 
 fn compile_bindings(out_path: &Path) {
+    println!("Generating bindings..");
     let bindings = bindgen::Builder::default()
         .header(LLAMA_PATH.join("ggml.h").to_string_lossy())
         .header(LLAMA_PATH.join("llama.h").to_string_lossy())
@@ -48,9 +102,190 @@ fn compile_bindings(out_path: &Path) {
         .expect("Couldn't write bindings!");
 }
 
+/// Add platform appropriate flags and definitions present in all compilation configurations.
+fn push_common_flags(cx: &mut Build, cxx: &mut Build) {
+    cx.static_flag(true).cpp(false).std("c11");
+    cxx.static_flag(true).cpp(true).std("c++14"); // MSVC does not support C++11
+
+    if !cfg!(debug_assertions) {
+        cx.define("NDEBUG", None);
+        cxx.define("NDEBUG", None);
+    } else {
+        cx.define("GGML_DEBUG", "100");
+        cxx.define("GGML_DEBUG", "100");
+
+        if cfg!(target_os = "linux") {
+            cx.define("_GLIBCXX_ASSERTIONS", None);
+            cxx.define("_GLIBCXX_ASSERTIONS", None);
+        } else if cfg!(target_os = "windows") {
+            cx.define("_CRT_SECURE_NO_WARNINGS", None);
+            cxx.define("_CRT_SECURE_NO_WARNINGS", None);
+        }
+    }
+
+    if cfg!(target_os = "openbsd") {
+        cx.define("_XOPEN_SOURCE", "700");
+        cxx.define("_XOPEN_SOURCE", "700");
+    } else {
+        cx.define("_XOPEN_SOURCE", "600");
+        cxx.define("_XOPEN_SOURCE", "600");
+    }
+
+    if cfg!(target_os = "linux") {
+        cx.define("_GNU_SOURCE", None);
+        cxx.define("_GNU_SOURCE", None);
+    } else if cfg!(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "dragonfly"
+    )) {
+        cx.define("_DARWIN_C_SOURCE", None);
+        cxx.define("_DARWIN_C_SOURCE", None);
+    } else if cfg!(target_os = "openbsd") {
+        cx.define("_BSD_SOURCE", None);
+        cxx.define("_BSD_SOURCE", None);
+    } else if cfg!(target_os = "freebsd") {
+        cx.define("__BSD_VISIBLE", None);
+        cxx.define("__BSD_VISIBLE", None);
+    } else if cfg!(target_os = "netbsd") {
+        cx.define("_NETBSD_SOURCE", None);
+        cxx.define("_NETBSD_SOURCE", None);
+    }
+
+    if cfg!(any(target_arch = "arm", target_arch = "aarch64")) {
+        if cfg!(target_family = "unix") {
+            cx.flag("-mavx512vnni").flag("-mfp16-format=ieee");
+            cxx.flag("-mavx512vnni").flag("-mfp16-format=ieee");
+        } else if cfg!(target_family = "windows") {
+            cx.define("__ARM_NEON", None)
+                .define("__ARM_FEATURE_FMA", None)
+                .define("__ARM_FEATURE_DOTPROD", None)
+                .define("__aarch64__", None);
+            cxx.define("__ARM_NEON", None)
+                .define("__ARM_FEATURE_FMA", None)
+                .define("__ARM_FEATURE_DOTPROD", None)
+                .define("__aarch64__", None);
+        }
+    }
+}
+
+/// Add platform appropriate flags and definitions for compilation warnings.
+fn push_warn_flags(cx: &mut Build, cxx: &mut Build) {
+    if cfg!(target_family = "unix") {
+        cx.flag("-pthread")
+            .flag("-Wall")
+            .flag("-Wextra")
+            .flag("-Wpedantic")
+            .flag("-Wcast-qual")
+            .flag("-Wdouble-promotion")
+            .flag("-Wshadow")
+            .flag("-Wstrict-prototypes")
+            .flag("-Wpointer-arith");
+        cxx.flag("-fPIC")
+            .flag("-pthread")
+            .flag("-Wall")
+            .flag("-Wdeprecated-declarations")
+            .flag("-Wextra")
+            .flag("-Wpedantic")
+            .flag("-Wcast-qual")
+            .flag("-Wno-unused-function")
+            .flag("-Wno-multichar");
+    } else if cfg!(target_family = "windows") {
+        cx.flag("/W4")
+            .flag("/Wall")
+            .flag("/wd4820")
+            .flag("/wd4710")
+            .flag("/wd4711")
+            .flag("/wd4820")
+            .flag("/wd4514");
+        cxx.flag("/W4")
+            .flag("/Wall")
+            .flag("/wd4820")
+            .flag("/wd4710")
+            .flag("/wd4711")
+            .flag("/wd4820")
+            .flag("/wd4514");
+    }
+}
+
+/// Add platform appropriate flags and definitions based on enabled features.
+fn push_feature_flags(cx: &mut Build, cxx: &mut Build) {
+    // TODO in llama.cpp's cmake (https://github.com/ggerganov/llama.cpp/blob/9ecdd12e95aee20d6dfaf5f5a0f0ce5ac1fb2747/CMakeLists.txt#L659), they include SIMD instructions manually, however it doesn't seem to be necessary for VS2022's MSVC, check when it is needed
+
+    if cfg!(any(target_arch = "x86", target_arch = "x86_64")) {
+        if cfg!(feature = "native") && cfg!(target_family = "unix") {
+            cx.flag("-march=native");
+            cxx.flag("-march=native");
+        }
+
+        if cfg!(feature = "fma") && cfg!(target_family = "unix") {
+            cx.flag("-mfma");
+            cxx.flag("-mfma");
+        }
+
+        if cfg!(feature = "f16c") && cfg!(target_family = "unix") {
+            cx.flag("-mf16c");
+            cxx.flag("-mf16c");
+        }
+
+        if cfg!(target_family = "unix") {
+            if cfg!(feature = "avx512") {
+                cx.flag("-mavx512f").flag("-mavx512bw");
+                cxx.flag("-mavx512f").flag("-mavx512bw");
+
+                if cfg!(feature = "avx512_vmbi") {
+                    cx.flag("-mavx512vbmi");
+                    cxx.flag("-mavx512vbmi");
+                }
+
+                if cfg!(feature = "avx512_vnni") {
+                    cx.flag("-mavx512vnni");
+                    cxx.flag("-mavx512vnni");
+                }
+            }
+
+            if cfg!(feature = "avx2") {
+                cx.flag("-mavx2");
+                cxx.flag("-mavx2");
+            }
+
+            if cfg!(feature = "avx") {
+                cx.flag("-mavx");
+                cxx.flag("-mavx");
+            }
+        } else if cfg!(target_family = "windows") {
+            if cfg!(feature = "avx512") {
+                cx.flag("/arch:AVX512");
+                cxx.flag("/arch:AVX512");
+
+                if cfg!(feature = "avx512_vmbi") {
+                    cx.define("__AVX512VBMI__", None);
+                    cxx.define("__AVX512VBMI__", None);
+                }
+
+                if cfg!(feature = "avx512_vnni") {
+                    cx.define("__AVX512VNNI__", None);
+                    cxx.define("__AVX512VNNI__", None);
+                }
+            } else if cfg!(feature = "avx2") {
+                cx.flag("/arch:AVX2");
+                cxx.flag("/arch:AVX2");
+            } else if cfg!(feature = "avx") {
+                cx.flag("/arch:AVX");
+                cxx.flag("/arch:AVX");
+            }
+        }
+    }
+}
+
 fn compile_opencl(cx: &mut Build, cxx: &mut Build) {
-    cx.flag("-DGGML_USE_CLBLAST");
-    cxx.flag("-DGGML_USE_CLBLAST");
+    println!("Compiling OpenCL GGML..");
+
+    // TODO
+    println!("cargo:warning=OpenCL compilation and execution has not been properly tested yet");
+
+    cx.define("GGML_USE_CLBLAST", None);
+    cxx.define("GGML_USE_CLBLAST", None);
 
     if cfg!(target_os = "linux") {
         println!("cargo:rustc-link-lib=OpenCL");
@@ -60,101 +295,88 @@ fn compile_opencl(cx: &mut Build, cxx: &mut Build) {
         println!("cargo:rustc-link-lib=clblast");
     }
 
-    cxx.file("./llama.cpp/ggml-opencl.cpp");
+    cxx.file(LLAMA_PATH.join("ggml-opencl.cpp"));
 }
 
 fn compile_openblas(cx: &mut Build) {
-    cx.flag("-DGGML_USE_OPENBLAS")
+    println!("Compiling OpenBLAS GGML..");
+
+    // TODO
+    println!("cargo:warning=OpenBlas compilation and execution has not been properly tested yet");
+
+    cx.define("GGML_USE_OPENBLAS", None)
         .include("/usr/local/include/openblas")
         .include("/usr/local/include/openblas");
     println!("cargo:rustc-link-lib=openblas");
 }
 
 fn compile_blis(cx: &mut Build) {
-    cx.flag("-DGGML_USE_OPENBLAS")
+    println!("Compiling BLIS GGML..");
+
+    // TODO
+    println!("cargo:warning=Blis compilation and execution has not been properly tested yet");
+
+    cx.define("GGML_USE_OPENBLAS", None)
         .include("/usr/local/include/blis")
         .include("/usr/local/include/blis");
     println!("cargo:rustc-link-search=native=/usr/local/lib");
     println!("cargo:rustc-link-lib=blis");
 }
 
-fn compile_cuda(cxx_flags: &str) {
-    println!("cargo:rustc-link-search=native=/usr/local/cuda/lib64");
-    println!("cargo:rustc-link-search=native=/opt/cuda/lib64");
+fn compile_cuda(cx: &mut Build, cxx: &mut Build, featless_cxx: Build) -> &'static str {
+    println!("Compiling CUDA GGML..");
 
-    if let Ok(cuda_path) = std::env::var("CUDA_PATH") {
-        println!(
-            "cargo:rustc-link-search=native={}/targets/x86_64-linux/lib",
-            cuda_path
-        );
+    // CUDA gets linked through the cudarc crate.
+
+    cx.define("GGML_USE_CUBLAS", None);
+    cxx.define("GGML_USE_CUBLAS", None);
+
+    let mut nvcc = featless_cxx;
+    nvcc.cuda(true)
+        .flag("--forward-unknown-to-host-compiler")
+        .flag("-arch=native")
+        .define("K_QUANTS_PER_ITERATION", Some("2"))
+        .define("GGML_CUDA_PEER_MAX_BATCH_SIZE", Some("128"));
+
+    if cfg!(target_os = "linux") {
+        nvcc.flag("-Wno-pedantic");
+        // TODO Are these links needed?
+        println!("cargo:rustc-link-lib=pthread");
+        println!("cargo:rustc-link-lib=dl");
+        println!("cargo:rustc-link-lib=rt");
     }
 
-    let libs = "cublas culibos cudart cublasLt pthread dl rt";
-
-    for lib in libs.split_whitespace() {
-        println!("cargo:rustc-link-lib={}", lib);
+    if cfg!(feature = "cuda_dmmv") {
+        nvcc.define("GGML_CUDA_FORCE_DMMV", None)
+            .define("GGML_CUDA_DMMV_X", Some("32"))
+            .define("GGML_CUDA_MMV_Y", Some("1"));
     }
 
-    let mut nvcc = cc::Build::new();
-
-    let env_flags = vec![
-        ("LLAMA_CUDA_DMMV_X=32", "-DGGML_CUDA_DMMV_X"),
-        ("LLAMA_CUDA_DMMV_Y=1", "-DGGML_CUDA_DMMV_Y"),
-        ("LLAMA_CUDA_KQUANTS_ITER=2", "-DK_QUANTS_PER_ITERATION"),
-    ];
-
-    let nvcc_flags = "--forward-unknown-to-host-compiler -arch=native ";
-
-    for nvcc_flag in nvcc_flags.split_whitespace() {
-        nvcc.flag(nvcc_flag);
+    if cfg!(feature = "cuda_mmq") {
+        nvcc.define("GGML_CUDA_FORCE_MMQ", None);
     }
 
-    for cxx_flag in cxx_flags.split_whitespace() {
-        nvcc.flag(cxx_flag);
-    }
+    let lib_name = "ggml-cuda";
 
-    for env_flag in env_flags {
-        let mut flag_split = env_flag.0.split("=");
-        if let Ok(val) = std::env::var(flag_split.next().unwrap()) {
-            nvcc.flag(&format!("{}={}", env_flag.1, val));
-        } else {
-            nvcc.flag(&format!("{}={}", env_flag.1, flag_split.next().unwrap()));
-        }
-    }
-
-    nvcc.compiler("nvcc")
-        .cuda(true)
-        .file(LLAMA_PATH.join("ggml-cuda.cu"))
-        .flag("-Wno-pedantic")
+    nvcc.file(LLAMA_PATH.join("ggml-cuda.cu"))
         .include(LLAMA_PATH.join("ggml-cuda.h"))
-        .compile("ggml-cuda");
-}
+        .compile(lib_name);
 
-fn compile_ggml(cx: &mut Build, cx_flags: &str) {
-    for cx_flag in cx_flags.split_whitespace() {
-        cx.flag_if_supported(cx_flag);
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        cx.define("_GNU_SOURCE", None);
-    }
-
-    cx.include(LLAMA_PATH.as_path())
-        .file(LLAMA_PATH.join("ggml.c"))
-        .file(LLAMA_PATH.join("ggml-alloc.c"))
-        .file(LLAMA_PATH.join("ggml-backend.c"))
-        .file(LLAMA_PATH.join("ggml-quants.c"))
-        .cpp(false)
-        .static_flag(true)
-        .define("_XOPEN_SOURCE", "600")
-        .define("GGML_USE_K_QUANTS", None)
-        .compile("ggml");
+    lib_name
 }
 
 fn compile_metal(cx: &mut Build, cxx: &mut Build) {
-    cx.flag("-DGGML_USE_METAL").flag("-DGGML_METAL_NDEBUG");
-    cxx.flag("-DGGML_USE_METAL");
+    println!("Compiling Metal GGML..");
+
+    // TODO
+    println!("cargo:warning=Metal compilation and execution has not been properly tested yet");
+
+    cx.define("GGML_USE_METAL", None);
+    cxx.define("GGML_USE_METAL", None);
+
+    if !cfg!(debug_assertions) {
+        cx.define("GGML_METAL_NDEBUG", None);
+    }
 
     println!("cargo:rustc-link-lib=framework=Metal");
     println!("cargo:rustc-link-lib=framework=Foundation");
@@ -165,25 +387,48 @@ fn compile_metal(cx: &mut Build, cxx: &mut Build) {
         .file(LLAMA_PATH.join("ggml-metal.m"));
 }
 
-fn compile_llama(cxx: &mut Build, cxx_flags: &str, _out_path: impl AsRef<Path>, _ggml_type: &str) {
-    for cxx_flag in cxx_flags.split_whitespace() {
-        cxx.flag_if_supported(cxx_flag);
+fn compile_vulkan(cx: &mut Build, cxx: &mut Build) -> &'static str {
+    println!("Compiling Vulkan GGML..");
+
+    // Vulkan gets linked through the ash crate.
+
+    if cfg!(debug_assertions) {
+        cx.define("GGML_VULKAN_DEBUG", None)
+            .define("GGML_VULKAN_VALIDATE", None);
+        //.define("GGML_VULKAN_CHECK_RESULTS", None)
+        cxx.define("GGML_VULKAN_DEBUG", None)
+            .define("GGML_VULKAN_VALIDATE", None);
+        //.define("GGML_VULKAN_CHECK_RESULTS", None)
     }
 
-    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "dragonfly"))]
-    {
-        cxx.define("_DARWIN_C_SOURCE", None);
-    }
+    cx.define("GGML_USE_VULKAN", None);
+    cxx.define("GGML_USE_VULKAN", None);
 
-    #[cfg(target_os = "linux")]
-    {
-        cxx.define("_GNU_SOURCE", None);
-    }
+    let lib_name = "ggml-vulkan";
 
-    cxx.static_flag(true)
+    cxx.clone()
+        .include("./thirdparty/Vulkan-Headers/include/")
+        .include(LLAMA_PATH.as_path())
+        .file(LLAMA_PATH.join("ggml-vulkan.cpp"))
+        .compile(lib_name);
+
+    lib_name
+}
+
+fn compile_ggml(mut cx: Build) {
+    println!("Compiling GGML..");
+    cx.include(LLAMA_PATH.as_path())
+        .file(LLAMA_PATH.join("ggml.c"))
+        .file(LLAMA_PATH.join("ggml-alloc.c"))
+        .file(LLAMA_PATH.join("ggml-backend.c"))
+        .file(LLAMA_PATH.join("ggml-quants.c"))
+        .compile("ggml");
+}
+
+fn compile_llama(mut cxx: Build, _out_path: impl AsRef<Path>) {
+    println!("Compiling Llama.cpp..");
+    cxx.include(LLAMA_PATH.as_path())
         .file(LLAMA_PATH.join("llama.cpp"))
-        .cpp(true)
-        .define("_XOPEN_SOURCE", "600")
         .compile("llama");
 }
 
@@ -191,201 +436,84 @@ fn main() {
     if std::fs::read_dir(LLAMA_PATH.as_path()).is_err() {
         panic!(
             "Could not find {}. Did you forget to initialize submodules?",
-            LLAMA_PATH.to_string_lossy()
+            LLAMA_PATH.display()
         );
     }
 
     let out_path = PathBuf::from(env::var("OUT_DIR").expect("No out dir found"));
 
+    println!("cargo:rerun-if-changed={}", LLAMA_PATH.display());
+
     compile_bindings(&out_path);
 
-    let mut cx_flags = String::from("");
-    let mut cxx_flags = String::from("");
+    let mut cx = Build::new();
+    let mut cxx = Build::new();
 
-    // Standard compilation flags
+    push_common_flags(&mut cx, &mut cxx);
 
-    if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
-        cx_flags.push_str(" -std=c11 -Wall -Wextra -Wpedantic -Wcast-qual -Wdouble-promotion -Wshadow -Wstrict-prototypes -Wpointer-arith -pthread");
-        cxx_flags.push_str(" -std=c++11 -Wall -Wdeprecated-declarations -Wunused-but-set-variable -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wno-multichar -fPIC -pthread");
-    } else if cfg!(target_os = "windows") {
-        cx_flags.push_str(" /W4 /Wall /wd4820 /wd4710 /wd4711 /wd4820 /wd4514");
-        cxx_flags.push_str(" /W4 /Wall /wd4820 /wd4710 /wd4711 /wd4820 /wd4514");
-    }
+    let featless_cxx = cxx.clone(); // mostly used for CUDA
 
-    // Feature flags
+    push_warn_flags(&mut cx, &mut cxx);
+    push_feature_flags(&mut cx, &mut cxx);
 
-    // TODO in llama.cpp's cmake (https://github.com/ggerganov/llama.cpp/blob/9ecdd12e95aee20d6dfaf5f5a0f0ce5ac1fb2747/CMakeLists.txt#L659), they include SIMD instructions manually, however it doesn't seem to be necessary for VS2022's MSVC, check when it is needed
-    // TODO add missing windows feature support
-
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    {
-        #[cfg(feature = "native")]
-        {
-            if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
-                cx_flags.push_str(" -march=native -mtune=native");
-                cxx_flags.push_str(" -march=native -mtune=native");
-            }
-        }
-
-        #[cfg(feature = "fma")]
-        {
-            if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
-                cx_flags.push_str(" -mfma");
-                cxx_flags.push_str(" -mfma");
-            }
-        }
-
-        #[cfg(feature = "f16c")]
-        {
-            if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
-                cx_flags.push_str(" -mf16c");
-                cxx_flags.push_str(" -mf16c");
-            }
-        }
-
-        #[cfg(feature = "avx")]
-        {
-            if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
-                cx_flags.push_str(" -mavx");
-                cxx_flags.push_str(" -mavx");
-            } else if !(cfg!(feature = "avx2") || cfg!(feature = "avx512")) {
-                cx_flags.push_str(" /arch:AVX");
-                cxx_flags.push_str(" /arch:AVX");
-            }
-        }
-
-        #[cfg(feature = "avx2")]
-        {
-            if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
-                cx_flags.push_str(" -mavx2");
-                cxx_flags.push_str(" -mavx2");
-            } else if !cfg!(feature = "avx512") {
-                cx_flags.push_str(" /arch:AVX2");
-                cxx_flags.push_str(" /arch:AVX2");
-            }
-        }
-
-        #[cfg(feature = "avx512")]
-        {
-            if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
-                cx_flags.push_str(" -mavx512f -mavx512bw");
-                cxx_flags.push_str(" -mavx512f -mavx512bw");
-            }
-        }
-
-        #[cfg(feature = "avx512_vmbi")]
-        {
-            if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
-                cx_flags.push_str(" -mavx512vbmi");
-                cxx_flags.push_str(" -mavx512vbmi");
-            }
-        }
-
-        #[cfg(feature = "avx512_vnni")]
-        {
-            if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
-                cx_flags.push_str(" -mavx512vnni");
-                cxx_flags.push_str(" -mavx512vnni");
-            }
-        }
-    }
-
-    #[cfg(any(target_arch = "arm", target_arch = "aarch64"))]
-    {
-        #[cfg(target_family = "unix")]
-        {
-            cx_flags.push_str(" -mavx512vnni -mfp16-format=ieee");
-            cxx_flags.push_str(" -mavx512vnni -mfp16-format=ieee");
-        }
-    }
-
-    let mut cx = cc::Build::new();
-
-    let mut cxx = cc::Build::new();
-
-    let mut ggml_type = String::new();
-
-    cxx.include(LLAMA_PATH.join("common"))
-        .include(LLAMA_PATH.as_path())
-        .include("./include");
-
-    if cfg!(feature = "opencl") {
+    let feat_lib = if cfg!(feature = "vulkan") {
+        Some(compile_vulkan(&mut cx, &mut cxx))
+    } else if cfg!(feature = "cuda") {
+        Some(compile_cuda(&mut cx, &mut cxx, featless_cxx))
+    } else if cfg!(feature = "opencl") {
         compile_opencl(&mut cx, &mut cxx);
-        ggml_type = "opencl".to_string();
+        None
     } else if cfg!(feature = "openblas") {
         compile_openblas(&mut cx);
+        None
     } else if cfg!(feature = "blis") {
         compile_blis(&mut cx);
+        None
     } else if cfg!(feature = "metal") && cfg!(target_os = "macos") {
         compile_metal(&mut cx, &mut cxx);
-        ggml_type = "metal".to_string();
-    }
-
-    if cfg!(feature = "cuda") {
-        cx_flags.push_str(" -DGGML_USE_CUBLAS");
-        cxx_flags.push_str(" -DGGML_USE_CUBLAS");
-
-        cx.include("/usr/local/cuda/include")
-            .include("/opt/cuda/include");
-        cxx.include("/usr/local/cuda/include")
-            .include("/opt/cuda/include");
-
-        if let Ok(cuda_path) = std::env::var("CUDA_PATH") {
-            cx.include(format!("{}/targets/x86_64-linux/include", cuda_path));
-            cxx.include(format!("{}/targets/x86_64-linux/include", cuda_path));
-        }
-
-        compile_ggml(&mut cx, &cx_flags);
-
-        compile_cuda(&cxx_flags);
-
-        compile_llama(&mut cxx, &cxx_flags, &out_path, "cuda");
+        None
     } else {
-        compile_ggml(&mut cx, &cx_flags);
+        None
+    };
 
-        compile_llama(&mut cxx, &cxx_flags, &out_path, &ggml_type);
-    }
+    compile_ggml(cx);
+    compile_llama(cxx, &out_path);
 
     #[cfg(feature = "compat")]
     {
-        compat::redefine_symbols(out_path);
+        compat::redefine_symbols(out_path, feat_lib);
     }
 }
 
 #[cfg(feature = "compat")]
 mod compat {
-    use crate::*;
+    use std::collections::HashSet;
+    use std::fmt::{Display, Formatter};
     use std::process::Command;
 
-    pub fn redefine_symbols(out_path: impl AsRef<Path>) {
-        // TODO this whole section is a bit hacky, could probably clean it up a bit, particularly the retrieval of symbols from the library files
-        // TODO do this for cuda if necessary
+    use crate::*;
 
+    pub fn redefine_symbols(out_path: impl AsRef<Path>, additional_lib: Option<&str>) {
         let (ggml_lib_name, llama_lib_name) = lib_names();
-        let (nm_name, objcopy_name) = tool_names();
-        println!("Modifying {ggml_lib_name} and {llama_lib_name}, symbols acquired via \"{nm_name}\" and modified via \"{objcopy_name}\"");
+        let (nm, objcopy) = tools();
+        println!(
+            "Modifying {ggml_lib_name} and {llama_lib_name}, symbols acquired via \
+        \"{nm}\" and modified via \"{objcopy}\""
+        );
 
         // Modifying symbols exposed by the ggml library
 
-        let output = Command::new(nm_name)
-            .current_dir(&out_path)
-            .arg(ggml_lib_name)
-            .args(["-p", "-P"])
-            .output()
-            .expect("Failed to acquire symbols from the compiled library.");
-        if !output.status.success() {
-            panic!(
-                "An error has occurred while acquiring symbols from the compiled library ({})",
-                output.status
-            );
-        }
-        let out_str = String::from_utf8_lossy(&output.stdout);
+        let out_str = nm_symbols(&nm, ggml_lib_name, &out_path);
         let symbols = get_symbols(
             &out_str,
             [
                 Filter {
                     prefix: "ggml",
                     sym_type: 'T',
+                },
+                Filter {
+                    prefix: "ggml",
+                    sym_type: 'U',
                 },
                 Filter {
                     prefix: "ggml",
@@ -405,38 +533,11 @@ mod compat {
                 },
             ],
         );
-
-        let mut cmd = Command::new(objcopy_name);
-        cmd.current_dir(&out_path);
-        for symbol in symbols {
-            cmd.arg(format!("--redefine-sym={symbol}=llama_{symbol}"));
-        }
-        let status = cmd
-            .arg(ggml_lib_name)
-            .status()
-            .expect("Failed to modify global symbols from the ggml library.");
-        if !status.success() {
-            panic!(
-                "An error as occurred while modifying global symbols from library file ({})",
-                status
-            );
-        }
+        objcopy_redefine(&objcopy, ggml_lib_name, "llama_", symbols, &out_path);
 
         // Modifying the symbols llama depends on from ggml
 
-        let output = Command::new(nm_name)
-            .current_dir(&out_path)
-            .arg(llama_lib_name)
-            .args(["-p", "-P"])
-            .output()
-            .expect("Failed to acquire symbols from the compiled library.");
-        if !output.status.success() {
-            panic!(
-                "An error has occurred while acquiring symbols from the compiled library ({})",
-                output.status
-            );
-        }
-        let out_str = String::from_utf8_lossy(&output.stdout);
+        let out_str = nm_symbols(&nm, llama_lib_name, &out_path);
         let symbols = get_symbols(
             &out_str,
             [
@@ -450,21 +551,35 @@ mod compat {
                 },
             ],
         );
+        objcopy_redefine(&objcopy, llama_lib_name, "llama_", symbols, &out_path);
 
-        let mut cmd = Command::new(objcopy_name);
-        cmd.current_dir(&out_path);
-        for symbol in symbols {
-            cmd.arg(format!("--redefine-sym={symbol}=llama_{symbol}"));
-        }
-        let status = cmd
-            .arg(llama_lib_name)
-            .status()
-            .expect("Failed to modify ggml symbols from library file.");
-        if !status.success() {
-            panic!(
-                "An error has occurred while modifying ggml symbols from library file ({})",
-                status
+        if let Some(gpu_lib_name) = additional_lib {
+            // Modifying the symbols of the GPU library
+
+            let lib_name = if cfg!(target_family = "windows") {
+                format!("{gpu_lib_name}.lib")
+            } else if cfg!(target_family = "unix") {
+                format!("lib{gpu_lib_name}.a")
+            } else {
+                println!("cargo:warning=Unknown target family, defaulting to Unix lib names");
+                format!("lib{gpu_lib_name}.a")
+            };
+
+            let out_str = nm_symbols(&nm, &lib_name, &out_path);
+            let symbols = get_symbols(
+                &out_str,
+                [
+                    Filter {
+                        prefix: "ggml",
+                        sym_type: 'U',
+                    },
+                    Filter {
+                        prefix: "ggml",
+                        sym_type: 'T',
+                    },
+                ],
             );
+            objcopy_redefine(&objcopy, &lib_name, "llama_", symbols, &out_path);
         }
     }
 
@@ -487,61 +602,195 @@ mod compat {
         (ggml_lib_name, llama_lib_name)
     }
 
-    /// Returns the names of tools equivalent to [nm][nm] and [objcopy][objcopy].
+    /// Returns [`Tool`]s equivalent to [nm][nm] and [objcopy][objcopy].
     ///
     /// [nm]: https://www.man7.org/linux/man-pages/man1/nm.1.html
     /// [objcopy]: https://www.man7.org/linux/man-pages/man1/objcopy.1.html
-    fn tool_names() -> (&'static str, &'static str) {
+    fn tools() -> (Tool, Tool) {
         let nm_names;
         let objcopy_names;
-        if cfg!(target_family = "unix") {
+        let nm_help;
+        let objcopy_help;
+        if cfg!(target_os = "linux") {
             nm_names = vec!["nm", "llvm-nm"];
             objcopy_names = vec!["objcopy", "llvm-objcopy"];
+            nm_help = vec!["\"nm\" from GNU Binutils", "\"llvm-nm\" from LLVM"];
+            objcopy_help = vec![
+                "\"objcopy\" from GNU Binutils",
+                "\"llvm-objcopy\" from LLVM",
+            ];
+        } else if cfg!(any(
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "dragonfly"
+        )) {
+            nm_names = vec!["nm", "llvm-nm"];
+            objcopy_names = vec!["llvm-objcopy"];
+            nm_help = vec!["\"llvm-nm\" from LLVM 17"];
+            objcopy_help = vec!["\"llvm-objcopy\" from LLVM 17"];
         } else {
             nm_names = vec!["llvm-nm"];
             objcopy_names = vec!["llvm-objcopy"];
+            nm_help = vec!["\"llvm-nm\" from LLVM 17"];
+            objcopy_help = vec!["\"llvm-objcopy\" from LLVM 17"];
         }
 
-        let nm_name;
+        let nm_env = "NM_PATH";
+        println!("cargo:rerun-if-env-changed={nm_env}");
+        println!("Looking for \"nm\" or an equivalent tool");
+        let nm_name = find_tool(&nm_names, nm_env).unwrap_or_else(move || {
+            panic_tool_help("nm", nm_env, &nm_help);
+            unreachable!("The function above should have panicked")
+        });
 
-        if let Some(path) = option_env!("NM_PATH") {
-            nm_name = path;
-        } else {
-            println!("Looking for \"nm\" or an equivalent tool");
-            nm_name = find_tool(&nm_names).expect(
-                "No suitable tool equivalent to \"nm\" has been found in \
-            PATH, if one is already installed, either add it to PATH or set NM_PATH to its full path",
-            );
-        }
-
-        let objcopy_name;
-        if let Some(path) = option_env!("OBJCOPY_PATH") {
-            objcopy_name = path;
-        } else {
-            println!("Looking for \"objcopy\" or an equivalent tool");
-            objcopy_name = find_tool(&objcopy_names).expect("No suitable tool equivalent to \"objcopy\" has \
-            been found in PATH, if one is already installed, either add it to PATH or set OBJCOPY_PATH to its full path");
-        }
+        let objcopy_env = "OBJCOPY_PATH";
+        println!("cargo:rerun-if-env-changed={objcopy_env}");
+        println!("Looking for \"objcopy\" or an equivalent tool..");
+        let objcopy_name = find_tool(&objcopy_names, objcopy_env).unwrap_or_else(move || {
+            panic_tool_help("objcopy", objcopy_env, &objcopy_help);
+            unreachable!("The function above should have panicked")
+        });
 
         (nm_name, objcopy_name)
     }
 
-    /// Returns the first tool found in the system, given a list of tool names, returning the first one found and
-    /// printing its version.
+    /// A command line tool name present in `PATH` or its full [`Path`].
+    enum Tool {
+        /// The name of a tool present in `PATH`.
+        Name(&'static str),
+
+        /// The full [`Path`] to a tool.
+        FullPath(PathBuf),
+    }
+
+    impl Display for Tool {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Tool::Name(name) => write!(f, "{}", name),
+                Tool::FullPath(path) => write!(f, "{}", path.display()),
+            }
+        }
+    }
+
+    /// Returns the first [`Tool`] found in the system `PATH`, given a list of tool names, returning
+    /// the first one found and printing its version.
     ///
-    /// Returns [`Option::None`] if no tool is found.
-    fn find_tool<'a>(names: &[&'a str]) -> Option<&'a str> {
+    /// If a value is present in the provided environment variable name, it will get checked
+    /// instead.
+    ///
+    /// ## Panic
+    /// Returns [`Option::None`] if no [`Tool`] is found.
+    fn find_tool(names: &[&'static str], env: &str) -> Option<Tool> {
+        if let Ok(path_str) = env::var(env) {
+            let path_str = path_str.trim_matches([' ', '"', '\''].as_slice());
+            println!("{env} is set, checking if \"{path_str}\" is a valid tool");
+            let path = PathBuf::from(&path_str);
+
+            if !path.is_file() {
+                panic!("\"{path_str}\" is not a file path.")
+            }
+
+            let output = Command::new(path_str)
+                .arg("--version")
+                .output()
+                .unwrap_or_else(|e| panic!("Failed to run \"{path_str} --version\". ({e})"));
+
+            if output.status.success() {
+                let out_str = String::from_utf8_lossy(&output.stdout);
+                println!("Valid tool found:\n{out_str}");
+            } else {
+                println!("cargo:warning=Tool \"{path_str}\" found, but could not execute \"{path_str} --version\"")
+            }
+
+            return Some(Tool::FullPath(path));
+        }
+
+        println!("{env} not set, looking for {names:?} in PATH");
         for name in names {
             if let Ok(output) = Command::new(name).arg("--version").output() {
                 if output.status.success() {
                     let out_str = String::from_utf8_lossy(&output.stdout);
-                    println!("Valid \"tool\" found:\n{out_str}");
-                    return Some(name);
+                    println!("Valid tool found:\n{out_str}");
+                    return Some(Tool::Name(name));
                 }
             }
         }
 
         None
+    }
+
+    /// Always panics, printing suggestions for finding the specified tool.
+    fn panic_tool_help(name: &str, env: &str, suggestions: &[&str]) {
+        let suggestions_str = if suggestions.is_empty() {
+            String::new()
+        } else {
+            let mut suggestions_str = "For your Operating System we recommend:\n".to_string();
+            for suggestion in &suggestions[..suggestions.len() - 1] {
+                suggestions_str.push_str(&format!("{suggestion}\nOR\n"));
+            }
+            suggestions_str.push_str(suggestions[suggestions.len() - 1]);
+            suggestions_str
+        };
+
+        panic!("No suitable tool equivalent to \"{name}\" has been found in PATH, if one is already installed, either add its directory to PATH or set {env} to its full path. {suggestions_str}")
+    }
+
+    /// Executes [nm][nm] or an equivalent tool in portable mode and returns the output.
+    ///
+    /// ## Panic
+    /// Will panic on any errors.
+    ///
+    /// [nm]: https://www.man7.org/linux/man-pages/man1/nm.1.html
+    fn nm_symbols(tool: &Tool, target_lib: &str, out_path: impl AsRef<Path>) -> String {
+        let output = Command::new(tool.to_string())
+            .current_dir(&out_path)
+            .arg(target_lib)
+            .args(["-p", "-P"])
+            .output()
+            .unwrap_or_else(move |e| panic!("Failed to run \"{tool}\". ({e})"));
+
+        if !output.status.success() {
+            panic!(
+                "An error has occurred while acquiring symbols from the compiled library \"{target_lib}\" ({}):\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        String::from_utf8_lossy(&output.stdout).to_string()
+    }
+
+    /// Executes [objcopy][objcopy], adding a prefix to the specified symbols of the target library.
+    ///
+    /// ## Panic
+    /// Will panic on any errors.
+    ///
+    /// [objcopy]: https://www.man7.org/linux/man-pages/man1/objcopy.1.html
+    fn objcopy_redefine(
+        tool: &Tool,
+        target_lib: &str,
+        prefix: &str,
+        symbols: HashSet<&str>,
+        out_path: impl AsRef<Path>,
+    ) {
+        let mut cmd = Command::new(tool.to_string());
+        cmd.current_dir(&out_path);
+        for symbol in symbols {
+            cmd.arg(format!("--redefine-sym={symbol}={prefix}{symbol}"));
+        }
+
+        let output = cmd
+            .arg(target_lib)
+            .output()
+            .unwrap_or_else(move |e| panic!("Failed to run \"{tool}\". ({e})"));
+
+        if !output.status.success() {
+            panic!(
+                "An error has occurred while redefining symbols from library file \"{target_lib}\" ({}):\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
     }
 
     /// A filter for a symbol in a library.
@@ -556,14 +805,15 @@ mod compat {
     fn get_symbols<'a, const N: usize>(
         nm_output: &'a str,
         filters: [Filter<'a>; N],
-    ) -> impl Iterator<Item = &'a str> + 'a {
-        nm_output
+    ) -> HashSet<&'a str> {
+        let iter = nm_output
             .lines()
             .map(|symbol| {
                 // Strip irrelevant information
 
                 let mut stripped = symbol;
                 while stripped.split(' ').count() > 2 {
+                    // SAFETY: We just made sure ' ' is present above
                     let idx = unsafe { stripped.rfind(' ').unwrap_unchecked() };
                     stripped = &stripped[..idx]
                 }
@@ -581,6 +831,14 @@ mod compat {
                 }
                 false
             })
-            .map(|symbol| &symbol[..symbol.len() - 2]) // Strip the type, so only the symbol remains
+            .map(|symbol| &symbol[..symbol.len() - 2]); // Strip the type, so only the symbol remains
+
+        // Filter duplicates
+        HashSet::from_iter(iter)
     }
+}
+
+#[cfg(feature = "cuda")]
+mod cuda {
+    //
 }

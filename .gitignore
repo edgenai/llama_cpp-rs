@@ -39,6 +39,7 @@ $RECYCLE.BIN/
 .docusaurus
 .dynamodb/
 .env
+.envrc
 .env.development.local
 .env.local
 .env.production.local

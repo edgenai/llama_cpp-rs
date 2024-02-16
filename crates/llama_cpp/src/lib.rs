@@ -16,7 +16,7 @@
 //!
 //! // A `LlamaModel` holds the weights shared across many _sessions_; while your model may be
 //! // several gigabytes large, a session is typically a few dozen to a hundred megabytes!
-//! let mut ctx = model.create_session(SessionParams::default());
+//! let mut ctx = model.create_session(SessionParams::default()).unwrap();
 //!
 //! // You can feed anything that implements `AsRef<[u8]>` into the model's context.
 //! ctx.advance_context("This is the story of a man named Stanley.").unwrap();
@@ -83,9 +83,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::{ptr, thread};
 
-use ctor::{ctor, dtor};
 use derive_more::{Deref, DerefMut};
+use futures::executor::block_on;
 use thiserror::Error;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{error, info, trace, warn};
 
@@ -94,56 +95,95 @@ use llama_cpp_sys::{
     llama_batch_init, llama_beam_search, llama_context, llama_context_default_params,
     llama_context_params, llama_decode, llama_free, llama_free_model, llama_get_logits_ith,
     llama_load_model_from_file, llama_log_set, llama_model, llama_model_default_params,
-    llama_n_vocab, llama_new_context_with_model, llama_token_bos, llama_token_data,
-    llama_token_data_array, llama_token_eos, llama_token_eot, llama_token_get_text,
-    llama_token_middle, llama_token_nl, llama_token_prefix, llama_token_suffix,
-    llama_token_to_piece, llama_tokenize,
+    llama_model_params, llama_n_vocab, llama_new_context_with_model, llama_split_mode,
+    llama_split_mode_LLAMA_SPLIT_LAYER, llama_split_mode_LLAMA_SPLIT_NONE,
+    llama_split_mode_LLAMA_SPLIT_ROW, llama_token_bos, llama_token_data, llama_token_data_array,
+    llama_token_eos, llama_token_eot, llama_token_get_text, llama_token_middle, llama_token_nl,
+    llama_token_prefix, llama_token_suffix, llama_token_to_piece, llama_tokenize,
 };
 
 /// The standard sampler implementation.
 pub mod standard_sampler;
 
-/// Boolean indicating if a logger has already been set using [`llama_log_set`].
-static LOGGER_SET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The current instance of [`Backend`], if it exists. Also stored is a reference count used for
+/// initialisation and freeing.
+static BACKEND: Mutex<Option<(Backend, usize)>> = Mutex::const_new(None);
 
-/// [ctor](https://docs.rs/ctor/latest/ctor/) wind-up binding to invoke llama.cpp's
-/// `llama_backend_init`, which is required before using the library.
-///
-/// This executes automatically before `main` via some linker shenanigans.
-#[ctor]
-fn llama_cpp_up() {
-    unsafe {
-        // SAFETY: This is the only time that `llama_backend_init` is called. We always assume that
-        // NUMA is available.
-        llama_backend_init(true);
-    }
-}
-
-/// [ctor](https://docs.rs/ctor/latest/ctor/) teardown binding to invoke llama.cpp's
-/// `llama_backend_free`, which frees any memory claimed by [`llama_cpp_up`].
-///
-/// This executes automatically following `main` via some linker shenanigans.
-#[dtor]
-fn llama_cpp_down() {
-    unsafe {
-        // SAFETY: This is the only time that `llama_backend_free` is called.
-        llama_backend_free();
-    }
-}
-
-/// Sets the global [`llama.cpp`][llama.cpp] logger, if it wasn't set already.
-///
-/// The logger set by [`llama_log_set`] seems to reset itself when set inside [`llama_cpp_up`],
-/// which is why this function has to be called everytime a new model is loaded instead.
+/// Empty struct used to initialise and free the [llama.cpp][llama.cpp] backend when it is created
+/// dropped respectively.
 ///
 /// [llama.cpp]: https://github.com/ggerganov/llama.cpp/
-fn set_log() {
-    if !LOGGER_SET.swap(true, Ordering::SeqCst) {
+struct Backend {}
+
+impl Backend {
+    /// Initialises the [llama.cpp][llama.cpp] backend and sets its logger.
+    ///
+    /// There should only ever be one instance of this struct at any given time.
+    ///
+    /// [llama.cpp]: https://github.com/ggerganov/llama.cpp/
+    fn init() -> Self {
         unsafe {
+            // SAFETY: This is only called when no models or sessions exist.
+            llama_backend_init(true);
+
             // SAFETY: performs a simple assignment to static variables. Should only execute once
             // before any logs are made.
             llama_log_set(Some(detail::llama_log_callback), ptr::null_mut());
         }
+
+        Self {}
+    }
+}
+
+impl Drop for Backend {
+    fn drop(&mut self) {
+        unsafe {
+            // SAFETY: This is only called when no models or sessions exist.
+            llama_backend_free();
+        }
+    }
+}
+
+/// A "reference" to [`BACKEND`].
+///
+/// Initialises [`BACKEND`] if there is no [`Backend`] inside. If there are no other references,
+/// this drops [`Backend`] upon getting itself dropped.
+struct BackendRef {}
+
+impl BackendRef {
+    /// Creates a new reference, initialising [`BACKEND`] if necessary.
+    async fn new() -> Self {
+        let mut lock = BACKEND.lock().await;
+        if let Some((_, count)) = lock.as_mut() {
+            *count += 1;
+        } else {
+            let _ = lock.insert((Backend::init(), 1));
+        }
+
+        Self {}
+    }
+}
+
+impl Drop for BackendRef {
+    fn drop(&mut self) {
+        block_on(async move {
+            let mut lock = BACKEND.lock().await;
+            if let Some((_, count)) = lock.as_mut() {
+                *count -= 1;
+
+                if *count == 0 {
+                    lock.take();
+                }
+            } else {
+                error!("Backend as already been freed, this should never happen")
+            }
+        });
+    }
+}
+
+impl Clone for BackendRef {
+    fn clone(&self) -> Self {
+        block_on(Self::new())
     }
 }
 
@@ -203,7 +243,12 @@ pub struct LlamaInternalError;
 /// This is a thin wrapper over an `Arc<RwLock<*mut llama_model>>`, which is used to share the
 /// model across threads.
 #[derive(Clone, Deref, DerefMut)]
-struct LlamaModelInner(*mut llama_model);
+struct LlamaModelInner {
+    #[deref]
+    #[deref_mut]
+    model: *mut llama_model,
+    _backend_ref: BackendRef,
+}
 
 unsafe impl Send for LlamaModelInner {}
 
@@ -216,7 +261,7 @@ impl Drop for LlamaModelInner {
             // `free`d yet.
             //
             // [1]: See https://github.com/rust-lang/rust/issues/60977
-            llama_free_model(self.0);
+            llama_free_model(self.model);
         }
     }
 }
@@ -269,19 +314,16 @@ impl LlamaModel {
     /// [tracing]: https://docs.rs/tracing/latest/tracing/
     pub fn load_from_file(
         file_path: impl AsRef<Path>,
-        _model_params: LlamaParams,
+        model_params: LlamaParams,
     ) -> Result<Self, LlamaLoadError> {
-        set_log();
+        let backend_ref = block_on(BackendRef::new());
+        info!("Loading model \"{}\"", file_path.as_ref().to_string_lossy());
 
         let file_path = file_path.as_ref();
 
         if !file_path.exists() {
             return Err(LlamaLoadError::DoesNotExist(file_path.into()));
         }
-
-        let params = unsafe { llama_model_default_params() };
-
-        // TODO create params from model_params
 
         let model = unsafe {
             // SAFETY: Assume that llama.cpp will gracefully fail and return `nullptr` if
@@ -297,7 +339,7 @@ impl LlamaModel {
                         )
                     })
                     .as_ptr(),
-                params,
+                model_params.into(),
             )
         };
 
@@ -310,7 +352,10 @@ impl LlamaModel {
             };
 
             Ok(Self {
-                model: Arc::new(RwLock::new(LlamaModelInner(model))),
+                model: Arc::new(RwLock::new(LlamaModelInner {
+                    model,
+                    _backend_ref: backend_ref,
+                })),
                 vocabulary_size: vocabulary_size as usize,
                 bos_token: Token(unsafe { llama_token_bos(model) }),
                 eos_token: Token(unsafe { llama_token_eos(model) }),
@@ -443,6 +488,7 @@ impl LlamaModel {
         }
 
         let c_string = unsafe {
+            // SAFETY: llama_token_to_piece should always return a null terminated buffer
             CString::from_vec_with_nul_unchecked(buffer.iter().map(move |x| *x as u8).collect())
         };
         c_string.to_string_lossy().to_string()
@@ -456,7 +502,10 @@ impl LlamaModel {
     /// The vast majority of loaded data (weights) are immutably stored in the model, with a much
     /// smaller state belonging to each context. For Zephyr 7B, this works out to about 4GiB for
     /// the model weights and 100MiB for each session.
-    pub fn create_session(&self, session_params: SessionParams) -> LlamaSession {
+    pub fn create_session(
+        &self,
+        session_params: SessionParams,
+    ) -> Result<LlamaSession, LlamaContextError> {
         let params = llama_context_params::from(session_params);
         let max_batch = params.n_batch;
 
@@ -465,8 +514,11 @@ impl LlamaModel {
             // for at least the lifetime of `LlamaContext`.
             llama_new_context_with_model(**self.model.try_read().unwrap(), params)
         };
+        if ctx.is_null() {
+            return Err(LlamaContextError::SessionFailed);
+        }
 
-        LlamaSession {
+        Ok(LlamaSession {
             inner: Arc::new(LlamaSessionInner {
                 model: self.clone(),
                 ctx: Mutex::new(LlamaContextInner { ptr: ctx }),
@@ -474,7 +526,7 @@ impl LlamaModel {
                 last_batch_size: AtomicUsize::new(0),
                 max_batch,
             }),
-        }
+        })
     }
 
     /// Returns the beginning of sentence (BOS) token for this context.
@@ -586,8 +638,12 @@ pub enum LlamaContextError {
     NoTokensProvided,
 
     /// An error occurred on the other side of the FFI boundary; check your logs.
-    #[error("advancing context failed: {0}")]
-    LlamaError(#[from] LlamaInternalError),
+    #[error("failed to create llama context")]
+    SessionFailed,
+
+    /// An error occurred on the other side of the FFI boundary; check your logs.
+    #[error("advancing context failed (error code {0})")]
+    DecodeFailed(i32),
 }
 
 impl LlamaSession {
@@ -642,16 +698,15 @@ impl LlamaSession {
             trace!("Wrote {n_tokens} tokens to the token buffer");
             trace!("Starting LLaMA decode for batch");
 
-            if unsafe {
+            let err = unsafe {
                 // SAFETY: `llama_decode` will not fail for a valid `batch`, which we correctly
                 // initialized above.
                 llama_decode(self.inner.ctx.blocking_lock().ptr, batch.handle())
-            } != 0
-            {
-                return Err(LlamaInternalError.into());
-            } else {
-                trace!("Batch decode completed successfully");
+            };
+            if err != 0 {
+                return Err(LlamaContextError::DecodeFailed(err));
             }
+            trace!("Batch decode completed successfully");
 
             last_batch_size = sequence.len();
         }
@@ -719,7 +774,7 @@ impl LlamaSession {
     /// Starts generating tokens at the end of the context using llama.cpp's built-in Beam search.
     /// TODO fix: beam search keeps going even after it should have ended
     pub fn start_completing(&mut self) -> CompletionHandle {
-        let (tx, rx) = flume::unbounded();
+        let (tx, rx) = unbounded_channel();
         let history_size = self.inner.history_size.load(Ordering::SeqCst);
         let session = self.clone();
 
@@ -752,7 +807,7 @@ impl LlamaSession {
     where
         S: Sampler + Send + Sync + 'static,
     {
-        let (tx, rx) = flume::unbounded();
+        let (tx, rx) = unbounded_channel();
         let history_size = self.inner.history_size.load(Ordering::SeqCst);
         let session = self.clone();
         // TODO deal with 0 history size
@@ -837,61 +892,128 @@ impl LlamaSession {
 /// If this structure is dropped, the off thread is stopped.
 pub struct CompletionHandle {
     /// The token receiver bound to the off thread.
-    rx: flume::Receiver<Token>,
+    rx: UnboundedReceiver<Token>,
 }
 
 impl CompletionHandle {
     /// Blocks the current thread, resolving to the next completed token, or `None` if EOS is
     /// reached.
-    pub fn next_token(&self) -> Option<Token> {
-        self.rx.recv().ok()
+    pub fn next_token(&mut self) -> Option<Token> {
+        block_on(self.rx.recv())
     }
 
     /// Asynchronously yields the current thread, resolving to the next completed token, or `None`
     /// if EOS is reached.
-    pub async fn next_token_async(&self) -> Option<Token> {
-        self.rx.recv_async().await.ok()
+    pub async fn next_token_async(&mut self) -> Option<Token> {
+        self.rx.recv().await
     }
 }
 
 /// Parameters for llama.
 pub struct LlamaParams {
-    /// number of layers to store in VRAM
+    /// Number of layers to store in VRAM.
+    ///
+    /// If this number is bigger than the amount of model layers, all layers are loaded to VRAM.
     pub n_gpu_layers: u32,
 
-    /// the GPU that is used for scratch and small tensors
+    /// How to split the model across multiple GPUs
+    pub split_mode: SplitMode,
+
+    /// The GPU that is used for scratch and small tensors
     pub main_gpu: u32,
 
-    /// how to split layers across multiple GPUs (size: LLAMA_MAX_DEVICES)
+    /// How to split layers across multiple GPUs (size: LLAMA_MAX_DEVICES)
     //const float * tensor_split, TODO
 
-    /// called with a progress value between 0 and 1, pass NULL to disable
+    /// Called with a progress value between 0 and 1, pass NULL to disable
     //llama_progress_callback progress_callback, TODO
 
-    /// context pointer passed to the progress callback
+    /// Context pointer passed to the progress callback
     //void * progress_callback_user_data, TODO
 
-    /// override key-value pairs of the model meta data
+    /// Override key-value pairs of the model meta data
     //const struct llama_model_kv_override * kv_overrides, TODO
 
-    /// only load the vocabulary, no weights
+    /// Only load the vocabulary, no weights
     pub vocab_only: bool,
 
-    /// use mmap if possible
+    /// Use mmap if possible
     pub use_mmap: bool,
 
-    /// force system to keep model in RAM
+    /// Force system to keep model in RAM
     pub use_mlock: bool,
+}
+
+/// A policy to split the model across multiple GPUs
+#[non_exhaustive]
+pub enum SplitMode {
+    /// Single GPU.
+    ///
+    /// Equivalent to [`llama_split_mode_LLAMA_SPLIT_NONE`]
+    None,
+
+    /// Split layers and KV across GPUs
+    ///
+    /// Equivalent to [`llama_split_mode_LLAMA_SPLIT_LAYER`]
+    Layer,
+
+    /// Split rows across GPUs
+    ///
+    /// Equivalent to [`llama_split_mode_LLAMA_SPLIT_ROW`]
+    Row,
+}
+
+impl From<SplitMode> for llama_split_mode {
+    fn from(value: SplitMode) -> Self {
+        match value {
+            SplitMode::None => llama_split_mode_LLAMA_SPLIT_NONE,
+            SplitMode::Layer => llama_split_mode_LLAMA_SPLIT_LAYER,
+            SplitMode::Row => llama_split_mode_LLAMA_SPLIT_ROW,
+        }
+    }
+}
+
+impl From<llama_split_mode> for SplitMode {
+    fn from(value: llama_split_mode) -> Self {
+        #![allow(non_upper_case_globals)]
+        match value {
+            llama_split_mode_LLAMA_SPLIT_NONE => SplitMode::None,
+            llama_split_mode_LLAMA_SPLIT_LAYER => SplitMode::Layer,
+            llama_split_mode_LLAMA_SPLIT_ROW => SplitMode::Row,
+            _ => unimplemented!(),
+        }
+    }
 }
 
 impl Default for LlamaParams {
     fn default() -> Self {
+        // SAFETY: Stack constructor, always safe
+        let c_params = unsafe { llama_model_default_params() };
+
         Self {
-            n_gpu_layers: 0,
-            main_gpu: 0,
-            vocab_only: false,
-            use_mmap: true,
-            use_mlock: false,
+            n_gpu_layers: c_params.n_gpu_layers as u32,
+            split_mode: c_params.split_mode.into(),
+            main_gpu: c_params.main_gpu as u32,
+            vocab_only: c_params.vocab_only,
+            use_mmap: c_params.use_mmap,
+            use_mlock: c_params.use_mlock,
+        }
+    }
+}
+
+impl From<LlamaParams> for llama_model_params {
+    fn from(value: LlamaParams) -> Self {
+        llama_model_params {
+            n_gpu_layers: value.n_gpu_layers as i32,
+            split_mode: value.split_mode.into(),
+            main_gpu: value.main_gpu as i32,
+            tensor_split: ptr::null_mut(),
+            progress_callback: None,
+            progress_callback_user_data: ptr::null_mut(),
+            kv_overrides: ptr::null_mut(),
+            vocab_only: value.vocab_only,
+            use_mmap: value.use_mmap,
+            use_mlock: value.use_mlock,
         }
     }
 }
@@ -914,7 +1036,7 @@ pub struct SessionParams {
     pub n_threads_batch: u32,
 
     /// RoPE scaling type, from [`llama_rope_scaling_type`]
-    pub rope_scaling_type: i8,
+    pub rope_scaling_type: i32,
 
     /// ref: https://github.com/ggerganov/llama.cpp/pull/2054
 
@@ -959,7 +1081,7 @@ impl Default for SessionParams {
             llama_context_default_params()
         };
 
-        let threads = num_cpus::get_physical() as u32;
+        let threads = num_cpus::get_physical() as u32 - 1;
 
         Self {
             seed: c_defaults.seed,
@@ -1000,7 +1122,7 @@ impl From<SessionParams> for llama_context_params {
             yarn_beta_slow: value.yarn_beta_slow,
             yarn_orig_ctx: value.yarn_orig_ctx,
             cb_eval: None,
-            cb_eval_user_data: std::ptr::null_mut(),
+            cb_eval_user_data: ptr::null_mut(),
             type_k: value.type_k as ggml_type,
             type_v: value.type_v as ggml_type,
             mul_mat_q: true,   // Deprecated
@@ -1144,6 +1266,7 @@ mod detail {
     use std::ffi::{c_char, c_void, CStr};
     use std::ptr::slice_from_raw_parts;
 
+    use tokio::sync::mpsc::UnboundedSender;
     use tracing::{error, info, trace, warn};
 
     use llama_cpp_sys::{
@@ -1154,7 +1277,7 @@ mod detail {
     use crate::Token;
 
     pub(crate) struct BeamSearchState {
-        pub(crate) tx: flume::Sender<Token>,
+        pub(crate) tx: UnboundedSender<Token>,
     }
 
     #[no_mangle]
@@ -1167,7 +1290,7 @@ mod detail {
             &mut *(shared_state_ptr as *mut BeamSearchState)
         };
 
-        if shared_state.tx.is_disconnected() {
+        if shared_state.tx.is_closed() {
             // Close all beams to terminate the search.
             for i in 0..beam_state.n_beams {
                 unsafe {

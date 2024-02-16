@@ -4,13 +4,15 @@ version = "0.3.0"
 description = "Automatically-generated bindings to llama.cpp's C API"
 edition = "2021"
 authors = ["Dakota Thompson <me@scriptis.net>", "Pedro Valente <pedro.amaral.valente@gmail.com>"]
-repository = "https://github.com/binedge/llama_cpp-rs"
+repository = "https://github.com/edgenai/llama_cpp-rs"
 license = "MIT OR Apache-2.0"
 readme = "../../README.md"
 publish = true
 links = "llama"
 
 [dependencies]
+ash = { version = "0.37.3+1.3.251", default-features = false, features = ["linked"], optional = true }
+cudarc = { version = "0.10.0", features = ["cublaslt"], optional = true }
 link-cplusplus = "1.0.9"
 
 [build-dependencies]
@@ -31,7 +33,7 @@ fma = []
 f16c = [] # implied when compiled using MSVC with avx2/avx512
 accel = [] # Accelerate framework
 mpi = []
-cuda = []
+cuda = ["dep:cudarc"]
 cuda_f16 = ["cuda"]
 cuda_dmmv = ["cuda"] # use dmmv instead of mmvq CUDA kernels
 cuda_mmq = ["cuda"] # use mmq kernels instead of cuBLAS
@@ -39,3 +41,4 @@ metal = []
 blas = []
 hipblas = []
 clblast = []
+vulkan = ["dep:ash"]
