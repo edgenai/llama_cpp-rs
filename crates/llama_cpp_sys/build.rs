@@ -339,48 +339,12 @@ fn compile_cuda(cx: &mut Build, cxx: &mut Build, featless_cxx: Build) -> &'stati
         .define("K_QUANTS_PER_ITERATION", Some("2"))
         .define("GGML_CUDA_PEER_MAX_BATCH_SIZE", Some("128"));
 
-    if cfg!(target_family = "windows") {
-        if let Ok(cuda_path) = std::env::var("CUDA_PATH") {
-            let cuda_path = PathBuf::from(cuda_path);
-
-            let cuda_include = cuda_path.join("include");
-            let cuda_include = cuda_include.display();
-            let cuda_lib = cuda_path.join("lib").join("x64");
-            let cuda_lib = cuda_lib.display();
-
-            cx.include(format!("{}", cuda_include));
-            cxx.include(format!("{}", cuda_include));
-            println!("cargo:rustc-link-search=native={}", cuda_lib);
-        }
-    } else {
-        cx.include("/usr/local/cuda/include")
-            .include("/opt/cuda/include");
-        cxx.include("/usr/local/cuda/include")
-            .include("/opt/cuda/include");
-
-        if let Ok(cuda_path) = std::env::var("CUDA_PATH") {
-            cx.include(format!("{}/targets/x86_64-linux/include", cuda_path));
-            cxx.include(format!("{}/targets/x86_64-linux/include", cuda_path));
-            println!(
-                "cargo:rustc-link-search=native={}/targets/x86_64-linux/lib",
-                cuda_path
-            );
-        }
-
-        println!("cargo:rustc-link-search=native=/usr/local/cuda/lib64");
-        println!("cargo:rustc-link-search=native=/opt/cuda/lib64");
-
+    if cfg!(target_os = "linux") {
         nvcc.flag("-Wno-pedantic");
-    }
-
-    let libs = if cfg!(target_os = "linux") {
-        "cublas culibos cudart cublasLt pthread dl rt"
-    } else {
-        "cuda cublas cudart cublasLt"
-    };
-
-    for lib in libs.split_whitespace() {
-        println!("cargo:rustc-link-lib={}", lib);
+        // TODO Are these links needed?
+        println!("cargo:rustc-link-lib=pthread");
+        println!("cargo:rustc-link-lib=dl");
+        println!("cargo:rustc-link-lib=rt");
     }
 
     if cfg!(feature = "cuda_dmmv") {

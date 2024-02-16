@@ -12,6 +12,7 @@ links = "llama"
 
 [dependencies]
 link-cplusplus = "1.0.9"
+cudarc = { version = "0.10.0", features = ["cublaslt"], optional = true }
 
 [build-dependencies]
 bindgen = "0.69.4"
@@ -31,7 +32,7 @@ fma = []
 f16c = [] # implied when compiled using MSVC with avx2/avx512
 accel = [] # Accelerate framework
 mpi = []
-cuda = []
+cuda = ["dep:cudarc"]
 cuda_f16 = ["cuda"]
 cuda_dmmv = ["cuda"] # use dmmv instead of mmvq CUDA kernels
 cuda_mmq = ["cuda"] # use mmq kernels instead of cuBLAS
