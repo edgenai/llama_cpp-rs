@@ -11,8 +11,9 @@ publish = true
 links = "llama"
 
 [dependencies]
-link-cplusplus = "1.0.9"
+ash = { version = "0.37.3+1.3.251", default-features = false, features = ["linked"], optional = true }
 cudarc = { version = "0.10.0", features = ["cublaslt"], optional = true }
+link-cplusplus = "1.0.9"
 
 [build-dependencies]
 bindgen = "0.69.4"
@@ -40,4 +41,4 @@ metal = []
 blas = []
 hipblas = []
 clblast = []
-vulkan = []
+vulkan = ["dep:ash"]

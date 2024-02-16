@@ -326,14 +326,13 @@ fn compile_blis(cx: &mut Build) {
 fn compile_cuda(cx: &mut Build, cxx: &mut Build, featless_cxx: Build) -> &'static str {
     println!("Compiling CUDA GGML..");
 
-    println!("cargo:rerun-if-env-changed=CUDA_PATH");
+    // CUDA gets linked through the cudarc crate.
 
     cx.define("GGML_USE_CUBLAS", None);
     cxx.define("GGML_USE_CUBLAS", None);
 
     let mut nvcc = featless_cxx;
     nvcc.cuda(true)
-        .cudart("static")
         .flag("--forward-unknown-to-host-compiler")
         .flag("-arch=native")
         .define("K_QUANTS_PER_ITERATION", Some("2"))
@@ -390,27 +389,8 @@ fn compile_metal(cx: &mut Build, cxx: &mut Build) {
 
 fn compile_vulkan(cx: &mut Build, cxx: &mut Build) -> &'static str {
     println!("Compiling Vulkan GGML..");
-    println!("cargo:rerun-if-env-changed=VULKAN_SDK");
 
-    if let Some(sdk_path) = option_env!("VULKAN_SDK") {
-        println!("Found Vulkan SDK path in system: \"{sdk_path}\"");
-        let (lib_folder, lib_name) = if cfg!(target_os = "windows") {
-            let folder = if cfg!(target_arch = "x86_64") || cfg!(target_arch = "aarch64") {
-                "Lib"
-            } else {
-                "Lib32"
-            };
-            (folder, "vulkan-1")
-        } else {
-            ("lib", "vulkan")
-        };
-
-        println!("cargo:rustc-link-search={sdk_path}/{lib_folder}");
-        println!("cargo:rustc-link-lib={lib_name}");
-    } else {
-        // TODO have local copy of vulkan lib?
-        todo!()
-    };
+    // Vulkan gets linked through the ash crate.
 
     if cfg!(debug_assertions) {
         cx.define("GGML_VULKAN_DEBUG", None)
