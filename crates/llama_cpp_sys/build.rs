@@ -213,7 +213,7 @@ fn push_feature_flags(cx: &mut Build, cxx: &mut Build) {
     // TODO in llama.cpp's cmake (https://github.com/ggerganov/llama.cpp/blob/9ecdd12e95aee20d6dfaf5f5a0f0ce5ac1fb2747/CMakeLists.txt#L659), they include SIMD instructions manually, however it doesn't seem to be necessary for VS2022's MSVC, check when it is needed
 
     if cfg!(any(target_arch = "x86", target_arch = "x86_64")) {
-        if cfg!(feature = "native") && cfg!(target_family = "unix") {
+        if cfg!(feature = "native") && cfg!(target_os = "linux") {
             cx.flag("-march=native");
             cxx.flag("-march=native");
         }
