@@ -154,8 +154,10 @@ fn push_common_flags(cx: &mut Build, cxx: &mut Build) {
 
     if cfg!(any(target_arch = "arm", target_arch = "aarch64")) {
         if cfg!(target_family = "unix") {
-            cx.flag("-mavx512vnni").flag("-mfp16-format=ieee");
-            cxx.flag("-mavx512vnni").flag("-mfp16-format=ieee");
+            // cx.flag("-mavx512vnni").flag("-mfp16-format=ieee");
+            // cxx.flag("-mavx512vnni").flag("-mfp16-format=ieee");
+            cx.flag("-mavx512vnni")
+            cxx.flag("-mavx512vnni")
         } else if cfg!(target_family = "windows") {
             cx.define("__ARM_NEON", None)
                 .define("__ARM_FEATURE_FMA", None)
