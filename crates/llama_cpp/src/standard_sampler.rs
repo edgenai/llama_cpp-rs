@@ -75,6 +75,7 @@ pub struct StandardSampler {
 impl StandardSampler {}
 
 impl Sampler for StandardSampler {
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn sample(
         &self,
         context: *mut llama_context,

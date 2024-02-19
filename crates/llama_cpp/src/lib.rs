@@ -94,9 +94,9 @@ use llama_cpp_sys::{
     ggml_type, llama_backend_free, llama_backend_init, llama_batch, llama_batch_free,
     llama_batch_init, llama_beam_search, llama_context, llama_context_default_params,
     llama_context_params, llama_decode, llama_free, llama_free_model, llama_get_logits_ith,
-    llama_load_model_from_file, llama_log_set, llama_model, llama_model_default_params,
-    llama_model_params, llama_n_vocab, llama_new_context_with_model, llama_split_mode,
-    llama_split_mode_LLAMA_SPLIT_LAYER, llama_split_mode_LLAMA_SPLIT_NONE,
+    llama_kv_cache_seq_rm, llama_load_model_from_file, llama_log_set, llama_model,
+    llama_model_default_params, llama_model_params, llama_n_vocab, llama_new_context_with_model,
+    llama_split_mode, llama_split_mode_LLAMA_SPLIT_LAYER, llama_split_mode_LLAMA_SPLIT_NONE,
     llama_split_mode_LLAMA_SPLIT_ROW, llama_token_bos, llama_token_data, llama_token_data_array,
     llama_token_eos, llama_token_eot, llama_token_get_text, llama_token_middle, llama_token_nl,
     llama_token_prefix, llama_token_suffix, llama_token_to_piece, llama_tokenize,
@@ -522,7 +522,7 @@ impl LlamaModel {
             inner: Arc::new(LlamaSessionInner {
                 model: self.clone(),
                 ctx: Mutex::new(LlamaContextInner { ptr: ctx }),
-                history_size: AtomicUsize::new(0),
+                tokens: RwLock::new(Vec::new()),
                 last_batch_size: AtomicUsize::new(0),
                 max_batch,
             }),
@@ -604,10 +604,10 @@ struct LlamaSessionInner {
     /// A pointer to the llama.cpp side of the model context.
     ctx: Mutex<LlamaContextInner>,
 
-    /// The number of tokens present in this model's context.
-    history_size: AtomicUsize,
+    /// The list of tokens within the current context.
+    tokens: RwLock<Vec<Token>>,
 
-    /// The number of tokens present in this model's context.
+    /// The number of tokens present in the last batch decoded.
     last_batch_size: AtomicUsize,
 
     /// Max batch size.
@@ -678,7 +678,7 @@ impl LlamaSession {
         }
 
         let mut batch = Batch::new(batch_size, 0, 1);
-        let history_size = self.inner.history_size.load(Ordering::SeqCst);
+        let history_size = self.context_size();
         let mut local_history = 0;
         let mut last_batch_size = self.inner.last_batch_size.load(Ordering::SeqCst);
 
@@ -711,9 +711,7 @@ impl LlamaSession {
             last_batch_size = sequence.len();
         }
 
-        self.inner
-            .history_size
-            .fetch_add(local_history, Ordering::SeqCst);
+        self.inner.tokens.blocking_write().extend_from_slice(tokens);
 
         self.inner
             .last_batch_size
@@ -762,20 +760,16 @@ impl LlamaSession {
         let ctx = ctx.as_ref().to_owned();
         let mut session = self.clone();
 
-        tokio::task::spawn_blocking(move || {
-            let tokens = session.inner.model.tokenize_bytes(ctx)?.into_boxed_slice();
-
-            session.advance_context_with_tokens(tokens)
-        })
-        .await
-        .unwrap()
+        tokio::task::spawn_blocking(move || session.advance_context(ctx))
+            .await
+            .unwrap()
     }
 
     /// Starts generating tokens at the end of the context using llama.cpp's built-in Beam search.
     /// TODO fix: beam search keeps going even after it should have ended
     pub fn start_completing(&mut self) -> CompletionHandle {
         let (tx, rx) = unbounded_channel();
-        let history_size = self.inner.history_size.load(Ordering::SeqCst);
+        let history_size = self.context_size();
         let session = self.clone();
 
         info!("Generating completions with {history_size} tokens of history");
@@ -808,7 +802,7 @@ impl LlamaSession {
         S: Sampler + Send + Sync + 'static,
     {
         let (tx, rx) = unbounded_channel();
-        let history_size = self.inner.history_size.load(Ordering::SeqCst);
+        let history_size = self.context_size();
         let session = self.clone();
         // TODO deal with 0 history size
         info!("Generating completions with {history_size} tokens of history");
@@ -874,7 +868,9 @@ impl LlamaSession {
                 i = batch.tokens();
 
                 session.inner.last_batch_size.store(i, Ordering::SeqCst);
-                current_pos = session.inner.history_size.fetch_add(i, Ordering::SeqCst);
+                let mut token_buf = session.inner.tokens.blocking_write();
+                current_pos = token_buf.len();
+                token_buf.push(token);
             }
         });
 
@@ -884,6 +880,106 @@ impl LlamaSession {
     /// Returns the model this session was created from.
     pub fn model(&self) -> LlamaModel {
         self.inner.model.clone()
+    }
+
+    /// Returns the number of tokens currently in this session's context
+    pub fn context_size(&self) -> usize {
+        self.inner.tokens.blocking_read().len()
+    }
+
+    /// Returns the list of tokens in the current context
+    pub fn context(&self) -> Vec<Token> {
+        self.inner.tokens.blocking_read().clone()
+    }
+
+    /// Removes all but the first `n_tokens` tokens from the context
+    pub fn truncate_context(&self, n_tokens: usize) {
+        if n_tokens > self.context_size() {
+            return;
+        }
+
+        let context = self.inner.ctx.blocking_lock();
+
+        unsafe {
+            llama_kv_cache_seq_rm(
+                context.ptr,
+                -1,              // Match all sequences
+                n_tokens as i32, // Delete starting at n_tokens
+                -1,              // Delete to the end of context
+            )
+        }
+
+        self.inner.tokens.blocking_write().truncate(n_tokens)
+    }
+
+    /// Sets this session's context to the tokens provided.
+    ///
+    /// This method is more efficient than creating a new session and advancing it, because it only
+    /// has to decode the tokens not already in the prefix of the previous context.
+    pub fn set_context_to_tokens(
+        &mut self,
+        new_tokens: impl AsRef<[Token]>,
+    ) -> Result<(), LlamaContextError> {
+        let new_tokens = new_tokens.as_ref();
+        let old_tokens = self.inner.tokens.blocking_read();
+
+        let shared_prefix = old_tokens
+            .iter()
+            .zip(new_tokens)
+            .position(|(t1, t2)| t1 != t2)
+            .unwrap_or(new_tokens.len().min(old_tokens.len()));
+
+        std::mem::drop(old_tokens);
+
+        self.truncate_context(shared_prefix);
+
+        // This will append the new tokens to `self.tokens`
+        self.advance_context_with_tokens(&new_tokens[shared_prefix..])
+    }
+
+    /// Sets this session's context to the tokenized version of the provided bytes. See
+    /// [`LlamaSession::set_context_to_tokens`] for more information.
+    pub fn set_context(&mut self, ctx: impl AsRef<[u8]>) -> Result<(), LlamaContextError> {
+        let tokens = self
+            .inner
+            .model
+            .tokenize_bytes(ctx.as_ref())?
+            .into_boxed_slice();
+
+        self.set_context_to_tokens(tokens)
+    }
+
+    /// Sets this session's context to the tokens provided.
+    ///
+    /// This is a thin `tokio::spawn_blocking` wrapper around
+    /// [`LlamaSession::set_context_to_tokens`].
+    pub async fn set_context_to_tokens_async(
+        &mut self,
+        tokens: impl AsRef<[Token]>,
+    ) -> Result<(), LlamaContextError> {
+        let tokens = tokens.as_ref().to_owned();
+        let mut session = self.clone();
+
+        tokio::task::spawn_blocking(move || session.set_context_to_tokens(tokens))
+            .await
+            .unwrap()
+    }
+
+    /// Sets this session's context to the tokenized version of the provided bytes. See
+    /// [`LlamaSession::set_context_to_tokens`] for more information.
+    ///
+    /// This is a thin `tokio::spawn_blocking` wrapper around
+    /// [`LlamaSession::set_context_to_tokens`].
+    pub async fn set_context_async(
+        &mut self,
+        ctx: impl AsRef<[u8]>,
+    ) -> Result<(), LlamaContextError> {
+        let ctx = ctx.as_ref().to_owned();
+        let mut session = self.clone();
+
+        tokio::task::spawn_blocking(move || session.set_context(ctx))
+            .await
+            .unwrap()
     }
 }
 
