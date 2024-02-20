@@ -701,7 +701,7 @@ impl LlamaSession {
             let err = unsafe {
                 // SAFETY: `llama_decode` will not fail for a valid `batch`, which we correctly
                 // initialized above.
-                llama_decode(self.inner.ctx.blocking_lock().ptr, batch.handle())
+                llama_decode(block_on(self.inner.ctx.lock()).ptr, batch.handle())
             };
             if err != 0 {
                 return Err(LlamaContextError::DecodeFailed(err));
@@ -711,7 +711,7 @@ impl LlamaSession {
             last_batch_size = sequence.len();
         }
 
-        self.inner.tokens.blocking_write().extend_from_slice(tokens);
+        block_on(self.inner.tokens.write()).extend_from_slice(tokens);
 
         self.inner
             .last_batch_size
@@ -780,7 +780,7 @@ impl LlamaSession {
             let state_ptr = Box::into_raw(state);
 
             llama_beam_search(
-                session.inner.ctx.blocking_lock().ptr,
+                block_on(session.inner.ctx.lock()).ptr,
                 Some(detail::llama_beam_search_callback),
                 state_ptr as *mut _ as *mut c_void,
                 1,
@@ -884,12 +884,12 @@ impl LlamaSession {
 
     /// Returns the number of tokens currently in this session's context
     pub fn context_size(&self) -> usize {
-        self.inner.tokens.blocking_read().len()
+        block_on(self.inner.tokens.read()).len()
     }
 
     /// Returns the list of tokens in the current context
     pub fn context(&self) -> Vec<Token> {
-        self.inner.tokens.blocking_read().clone()
+        block_on(self.inner.tokens.read()).clone()
     }
 
     /// Removes all but the first `n_tokens` tokens from the context
@@ -898,7 +898,7 @@ impl LlamaSession {
             return;
         }
 
-        let context = self.inner.ctx.blocking_lock();
+        let context = block_on(self.inner.ctx.lock());
 
         unsafe {
             llama_kv_cache_seq_rm(
@@ -909,7 +909,7 @@ impl LlamaSession {
             )
         }
 
-        self.inner.tokens.blocking_write().truncate(n_tokens)
+        block_on(self.inner.tokens.write()).truncate(n_tokens)
     }
 
     /// Sets this session's context to the tokens provided.
@@ -921,7 +921,7 @@ impl LlamaSession {
         new_tokens: impl AsRef<[Token]>,
     ) -> Result<(), LlamaContextError> {
         let new_tokens = new_tokens.as_ref();
-        let old_tokens = self.inner.tokens.blocking_read();
+        let old_tokens = block_on(self.inner.tokens.read());
 
         let shared_prefix = old_tokens
             .iter()
