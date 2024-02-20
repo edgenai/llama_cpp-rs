@@ -531,6 +531,14 @@ mod compat {
                     prefix: "dequantize",
                     sym_type: 'T',
                 },
+                Filter {
+                    prefix: "iq2xs",
+                    sym_type: 'T',
+                },
+                Filter {
+                    prefix: "iq3xs",
+                    sym_type: 'T',
+                },
             ],
         );
         objcopy_redefine(&objcopy, ggml_lib_name, "llama_", symbols, &out_path);
