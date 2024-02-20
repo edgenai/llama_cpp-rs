@@ -1,3 +1,5 @@
+//! Functionality for the [`LlamaSession`] struct
+
 use std::cmp::min;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicUsize, Ordering};

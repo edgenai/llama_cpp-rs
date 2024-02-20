@@ -1,3 +1,5 @@
+//! Implements [`LlamaParams`]
+
 use std::ptr;
 
 use llama_cpp_sys::{

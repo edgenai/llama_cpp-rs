@@ -1,3 +1,6 @@
+//! Implements the [`Backend`] and [`BackendRef`] structs for managing llama.cpp
+//! backends
+
 use std::ptr;
 
 use futures::executor::block_on;

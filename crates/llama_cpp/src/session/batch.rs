@@ -1,3 +1,5 @@
+//! Implements the [`Batch`] struct
+
 use llama_cpp_sys::{llama_batch, llama_batch_free, llama_batch_init};
 use tracing::trace;
 

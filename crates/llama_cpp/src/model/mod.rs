@@ -1,3 +1,5 @@
+//! Implements the [`LlamaModel`] struct
+
 use std::ffi::{CStr, CString};
 use std::path::{Path, PathBuf};
 use std::sync::{atomic::AtomicUsize, Arc};

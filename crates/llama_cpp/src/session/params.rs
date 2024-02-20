@@ -1,3 +1,5 @@
+//! Implements [`SessionParams`], which configures a [`crate::LlamaSession`]
+
 use std::ptr;
 
 use llama_cpp_sys::{ggml_type, llama_context_default_params, llama_context_params};
