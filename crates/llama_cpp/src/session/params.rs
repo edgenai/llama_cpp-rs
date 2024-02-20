@@ -5,6 +5,7 @@ use std::ptr;
 use llama_cpp_sys::{ggml_type, llama_context_default_params, llama_context_params};
 
 /// Session-specific parameters.
+#[derive(Clone)]
 pub struct SessionParams {
     /// RNG seed, [`u32::MAX`] for random (default)
     pub seed: u32,

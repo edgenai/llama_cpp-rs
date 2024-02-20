@@ -327,7 +327,7 @@ impl LlamaModel {
         &self,
         session_params: SessionParams,
     ) -> Result<LlamaSession, LlamaContextError> {
-        let params = llama_context_params::from(session_params);
+        let params = llama_context_params::from(session_params.clone());
         let max_batch = params.n_batch;
 
         let ctx = unsafe {
@@ -346,6 +346,7 @@ impl LlamaModel {
                 tokens: Mutex::new(Vec::new()),
                 last_batch_size: AtomicUsize::new(0),
                 max_batch,
+                params: session_params,
             }),
         })
     }
