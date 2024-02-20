@@ -82,6 +82,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::{ptr, thread};
+use std::ops::RemAssign;
 
 use derive_more::{Deref, DerefMut};
 use futures::executor::block_on;
@@ -90,17 +91,7 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{error, info, trace, warn};
 
-use llama_cpp_sys::{
-    ggml_type, llama_backend_free, llama_backend_init, llama_batch, llama_batch_free,
-    llama_batch_init, llama_beam_search, llama_context, llama_context_default_params,
-    llama_context_params, llama_decode, llama_free, llama_free_model, llama_get_logits_ith,
-    llama_load_model_from_file, llama_log_set, llama_model, llama_model_default_params,
-    llama_model_params, llama_n_vocab, llama_new_context_with_model, llama_split_mode,
-    llama_split_mode_LLAMA_SPLIT_LAYER, llama_split_mode_LLAMA_SPLIT_NONE,
-    llama_split_mode_LLAMA_SPLIT_ROW, llama_token_bos, llama_token_data, llama_token_data_array,
-    llama_token_eos, llama_token_eot, llama_token_get_text, llama_token_middle, llama_token_nl,
-    llama_token_prefix, llama_token_suffix, llama_token_to_piece, llama_tokenize,
-};
+use llama_cpp_sys::{ggml_type, llama_backend_free, llama_backend_init, llama_batch, llama_batch_free, llama_batch_init, llama_beam_search, llama_context, llama_context_default_params, llama_context_params, llama_decode, llama_free, llama_free_model, llama_get_logits_ith, llama_load_model_from_file, llama_log_set, llama_model, llama_model_default_params, llama_model_params, llama_n_ctx_train, llama_n_embd, llama_n_vocab, llama_new_context_with_model, llama_split_mode, llama_split_mode_LLAMA_SPLIT_LAYER, llama_split_mode_LLAMA_SPLIT_NONE, llama_split_mode_LLAMA_SPLIT_ROW, llama_token_bos, llama_token_data, llama_token_data_array, llama_token_eos, llama_token_eot, llama_token_get_text, llama_token_middle, llama_token_nl, llama_token_prefix, llama_token_suffix, llama_token_to_piece, llama_tokenize};
 
 /// The standard sampler implementation.
 pub mod standard_sampler;
@@ -300,6 +291,12 @@ pub struct LlamaModel {
 
     /// For infilling, the token for the end of the infill.
     eot_token: Token,
+
+    /// For embeddings, the length of a single embeddings vector.
+    embedding_length: usize,
+
+    /// The number of tokens in the context the model was trained with.
+    training_size: usize,
 }
 
 unsafe impl Send for LlamaModel {}
@@ -364,6 +361,8 @@ impl LlamaModel {
                 infill_middle_token: Token(unsafe { llama_token_middle(model) }),
                 infill_suffix_token: Token(unsafe { llama_token_suffix(model) }),
                 eot_token: Token(unsafe { llama_token_eot(model) }),
+                embedding_length: unsafe { llama_n_embd(model) } as usize,
+                training_size: unsafe { llama_n_ctx_train(model) } as usize,
             })
         }
     }
@@ -389,6 +388,8 @@ impl LlamaModel {
     pub fn tokenize_bytes(
         &self,
         content: impl AsRef<[u8]>,
+        add_bos: bool,
+        special: bool,
     ) -> Result<Vec<Token>, LlamaTokenizationError> {
         let content = content.as_ref();
 
@@ -414,8 +415,8 @@ impl LlamaModel {
                 content.len() as i32,
                 out_buf.as_mut_ptr() as *mut i32,
                 out_buf.capacity() as i32,
-                false,
-                false,
+                add_bos,
+                special,
             )
         };
 
@@ -529,6 +530,30 @@ impl LlamaModel {
         })
     }
 
+    fn embeddings(
+        &self,
+        inputs: &[impl AsRef<[u8]>],
+    ) -> Result<Vec<Vec<f32>>, LlamaTokenizationError> {
+        let input_res = inputs.iter().map(move |prompt| self.tokenize_bytes(prompt, true, false));
+        let mut input_tokens = vec![];
+        let mut max_tokens = 0;
+        for input in input_res {
+            let tokens = input?;
+            if max_tokens < tokens.len() {
+                max_tokens = tokens.len();
+            }
+            input_tokens.push(tokens);
+        }
+        let tokens = self.tokenize_bytes(prompt, true, false)?;
+        let max_batch = min(self.training_size, tokens.len());
+        let batch_tokens = tokens.chunks(max_batch);
+
+        let batch = Batch::new(max_batch, 0, )
+        let mut res = vec![];
+
+        Ok(res)
+    }
+
     /// Returns the beginning of sentence (BOS) token for this context.
     pub fn bos(&self) -> Token {
         self.bos_token
@@ -562,6 +587,16 @@ impl LlamaModel {
     /// Returns the infill end of middle token for this context.
     pub fn eot(&self) -> Token {
         self.eot_token
+    }
+
+    /// Returns the length of a single embedding vector for this model.
+    pub fn embed_len(&self) -> usize {
+        self.embedding_length
+    }
+
+    /// Returns the number of tokens in the context the model was trained with.
+    pub fn train_len(&self) -> usize {
+        self.training_size
     }
 }
 
@@ -745,7 +780,7 @@ impl LlamaSession {
         let tokens = self
             .inner
             .model
-            .tokenize_bytes(ctx.as_ref())?
+            .tokenize_bytes(ctx.as_ref(), false, false)?
             .into_boxed_slice();
 
         self.advance_context_with_tokens(tokens)
@@ -763,7 +798,11 @@ impl LlamaSession {
         let mut session = self.clone();
 
         tokio::task::spawn_blocking(move || {
-            let tokens = session.inner.model.tokenize_bytes(ctx)?.into_boxed_slice();
+            let tokens = session
+                .inner
+                .model
+                .tokenize_bytes(ctx, false, false)?
+                .into_boxed_slice();
 
             session.advance_context_with_tokens(tokens)
         })
