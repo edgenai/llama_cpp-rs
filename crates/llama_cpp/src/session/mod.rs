@@ -10,7 +10,7 @@ use futures::executor::block_on;
 use thiserror::Error;
 use tokio::sync::{
     mpsc::{unbounded_channel, UnboundedReceiver},
-    Mutex,
+    Mutex, RwLock
 };
 use tracing::{error, info, trace, warn};
 
@@ -67,7 +67,7 @@ pub(crate) struct LlamaSessionInner {
     pub(crate) ctx: Mutex<LlamaContextInner>,
 
     /// The list of tokens within the current context
-    pub(crate) tokens: Mutex<Vec<Token>>,
+    pub(crate) tokens: RwLock<Vec<Token>>,
 
     /// The number of tokens present in this model's context.
     pub(crate) last_batch_size: AtomicUsize,
@@ -140,7 +140,7 @@ impl LlamaSession {
         }
 
         let mut batch = Batch::new(batch_size, 0, 1);
-        let history_size = block_on(self.inner.tokens.lock()).len();
+        let history_size = self.context_size();
         let mut local_history = 0;
         let mut last_batch_size = self.inner.last_batch_size.load(Ordering::SeqCst);
 
@@ -173,7 +173,7 @@ impl LlamaSession {
             last_batch_size = sequence.len();
         }
 
-        block_on(self.inner.tokens.lock()).extend_from_slice(tokens);
+        block_on(self.inner.tokens.write()).extend_from_slice(tokens);
 
         self.inner
             .last_batch_size
@@ -330,7 +330,7 @@ impl LlamaSession {
                 i = batch.tokens();
 
                 session.inner.last_batch_size.store(i, Ordering::SeqCst);
-                let mut token_buf = block_on(session.inner.tokens.lock());
+                let mut token_buf = block_on(session.inner.tokens.write());
                 current_pos = token_buf.len();
                 token_buf.push(token);
             }
@@ -346,12 +346,12 @@ impl LlamaSession {
 
     /// Returns the number of tokens currently in this session's context
     pub fn context_size(&self) -> usize {
-        block_on(self.inner.tokens.lock()).len()
+        block_on(self.inner.tokens.read()).len()
     }
 
     /// Returns the list of tokens in the current context
     pub fn context(&self) -> Vec<Token> {
-        block_on(self.inner.tokens.lock()).clone()
+        block_on(self.inner.tokens.read()).clone()
     }
 
     /// Removes all but the first `n_tokens` tokens from the context
@@ -371,7 +371,7 @@ impl LlamaSession {
             )
         }
 
-        block_on(self.inner.tokens.lock()).truncate(n_tokens)
+        block_on(self.inner.tokens.write()).truncate(n_tokens)
     }
 
     /// Sets this session's context to the tokens provided.
@@ -383,7 +383,7 @@ impl LlamaSession {
         new_tokens: impl AsRef<[Token]>,
     ) -> Result<(), LlamaContextError> {
         let new_tokens = new_tokens.as_ref();
-        let mut old_tokens = block_on(self.inner.tokens.lock());
+        let old_tokens = block_on(self.inner.tokens.read());
 
         let shared_prefix = old_tokens
             .iter()
@@ -391,7 +391,6 @@ impl LlamaSession {
             .position(|(t1, t2)| t1 != t2)
             .unwrap_or(new_tokens.len().min(old_tokens.len()));
 
-        old_tokens.truncate(shared_prefix);
         std::mem::drop(old_tokens);
 
         self.truncate_context(shared_prefix);
