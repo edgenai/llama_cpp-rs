@@ -144,7 +144,7 @@ impl LlamaSession {
         }
 
         let mut batch = Batch::new(batch_size, 0, 1);
-        let history_size = self.inner.tokens.blocking_lock().len();
+        let history_size = block_on(self.inner.tokens.lock()).len();
         let mut local_history = 0;
         let mut last_batch_size = self.inner.last_batch_size.load(Ordering::SeqCst);
 
@@ -167,7 +167,7 @@ impl LlamaSession {
             let err = unsafe {
                 // SAFETY: `llama_decode` will not fail for a valid `batch`, which we correctly
                 // initialized above.
-                llama_decode(self.inner.ctx.blocking_lock().ptr, batch.handle())
+                llama_decode(block_on(self.inner.ctx.lock()).ptr, batch.handle())
             };
             if err != 0 {
                 return Err(LlamaContextError::DecodeFailed(err));
@@ -177,7 +177,7 @@ impl LlamaSession {
             last_batch_size = sequence.len();
         }
 
-        self.inner.tokens.blocking_lock().extend_from_slice(tokens);
+        block_on(self.inner.tokens.lock()).extend_from_slice(tokens);
 
         self.inner
             .last_batch_size
@@ -246,7 +246,7 @@ impl LlamaSession {
             let state_ptr = Box::into_raw(state);
 
             llama_beam_search(
-                session.inner.ctx.blocking_lock().ptr,
+                block_on(session.inner.ctx.lock()).ptr,
                 Some(detail::llama_beam_search_callback),
                 state_ptr as *mut _ as *mut c_void,
                 1,
@@ -274,7 +274,7 @@ impl LlamaSession {
         info!("Generating completions with {history_size} tokens of history");
 
         thread::spawn(move || {
-            let context = session.inner.ctx.blocking_lock();
+            let context = block_on(session.inner.ctx.lock());
             let vocab = session.model().vocabulary_size();
             let end_of_stream = session.model().eos();
             let mut count = 0;
@@ -334,7 +334,7 @@ impl LlamaSession {
                 i = batch.tokens();
 
                 session.inner.last_batch_size.store(i, Ordering::SeqCst);
-                let mut token_buf = session.inner.tokens.blocking_lock();
+                let mut token_buf = block_on(session.inner.tokens.lock());
                 current_pos = token_buf.len();
                 token_buf.push(token);
             }
@@ -350,12 +350,12 @@ impl LlamaSession {
 
     /// Returns the number of tokens currently in this session's context
     pub fn context_size(&self) -> usize {
-        self.inner.tokens.blocking_lock().len()
+        block_on(self.inner.tokens.lock()).len()
     }
 
     /// Returns the list of tokens in the current context
     pub fn context(&self) -> Vec<Token> {
-        self.inner.tokens.blocking_lock().clone()
+        block_on(self.inner.tokens.lock()).clone()
     }
 
     /// Removes all but the first `n_tokens` tokens from the context
@@ -364,7 +364,7 @@ impl LlamaSession {
             return;
         }
 
-        let context = self.inner.ctx.blocking_lock();
+        let context = block_on(self.inner.ctx.lock());
 
         unsafe {
             llama_kv_cache_seq_rm(
@@ -375,7 +375,7 @@ impl LlamaSession {
             )
         }
 
-        self.inner.tokens.blocking_lock().truncate(n_tokens)
+        block_on(self.inner.tokens.lock()).truncate(n_tokens)
     }
 
     /// Sets this session's context to the tokens provided.
@@ -387,7 +387,7 @@ impl LlamaSession {
         new_tokens: impl AsRef<[Token]>,
     ) -> Result<(), LlamaContextError> {
         let new_tokens = new_tokens.as_ref();
-        let mut old_tokens = self.inner.tokens.blocking_lock();
+        let mut old_tokens = block_on(self.inner.tokens.lock());
 
         let shared_prefix = old_tokens
             .iter()
