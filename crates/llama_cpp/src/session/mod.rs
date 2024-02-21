@@ -60,6 +60,7 @@ pub struct LlamaSession {
 }
 
 /// The cloned part of a [`LlamaSession`].
+// NOTE: Changes made here may need to be reflected in LlamaSession::deep_copy
 pub(crate) struct LlamaSessionInner {
     /// The model this session was created from.
     pub(crate) model: LlamaModel,
@@ -348,6 +349,11 @@ impl LlamaSession {
         self.inner.model.clone()
     }
 
+    /// Returns the parameters this session was created with.
+    pub fn params(&self) -> &SessionParams {
+        &self.inner.params
+    }
+
     /// Returns the number of tokens currently in this session's context
     pub fn context_size(&self) -> usize {
         block_on(self.inner.tokens.read()).len()
@@ -471,6 +477,8 @@ impl LlamaSession {
             assert_eq!(copy_size, set_size);
         }
 
+        // NOTE: Any changes to the fields of a LlamaSession may require that
+        // those changes are mirrored here
         *block_on(copy.inner.tokens.write()) = block_on(self.inner.tokens.read()).clone();
         copy.inner.last_batch_size.store(
             self.inner.last_batch_size.load(Ordering::SeqCst),
