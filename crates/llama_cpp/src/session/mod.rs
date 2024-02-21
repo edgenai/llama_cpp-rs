@@ -10,7 +10,7 @@ use futures::executor::block_on;
 use thiserror::Error;
 use tokio::sync::{
     mpsc::{unbounded_channel, UnboundedReceiver},
-    Mutex, RwLock
+    Mutex, RwLock,
 };
 use tracing::{error, info, trace, warn};
 
@@ -23,6 +23,7 @@ use crate::{detail, LlamaModel, LlamaTokenizationError, Sampler, Token};
 
 mod batch;
 mod params;
+mod token_decoder;
 
 use batch::Batch;
 pub use params::*;

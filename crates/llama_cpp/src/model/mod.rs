@@ -315,6 +315,50 @@ impl LlamaModel {
         c_string.to_string_lossy().to_string()
     }
 
+    pub fn decode_tokens<T: AsRef<Token>>(&self, tokens: impl IntoIterator<Item = T>) -> String {
+        let mut buf: Vec<i8> = Vec::new();
+        let mut i = 0;
+        let model = **block_on(self.model.read());
+
+        for token in tokens.into_iter() {
+            let token = *token.as_ref();
+            let token_buf = &mut buf[i..];
+
+            let size = unsafe {
+                llama_cpp_sys::llama_token_to_piece(
+                    model,
+                    token.0,
+                    token_buf.as_mut_ptr(),
+                    token_buf.len() as i32,
+                )
+            };
+
+            if size >= 0 {
+                i += size as usize;
+                continue;
+            }
+
+            buf.extend(std::iter::repeat(0).take((-size) as usize));
+            let extra_len = buf.capacity() - buf.len();
+            buf.extend(std::iter::repeat(0).take(extra_len));
+
+            let token_buf = &mut buf[i..];
+
+            let size = unsafe {
+                llama_cpp_sys::llama_token_to_piece(
+                    model,
+                    token.0,
+                    token_buf.as_mut_ptr(),
+                    token_buf.len() as i32,
+                )
+            };
+            assert!(size >= 0);
+        }
+
+        let buf: Vec<u8> = unsafe { std::mem::transmute(buf) };
+        String::from_utf8_lossy(&buf).to_string()
+    }
+
     /// Creates a new evaluation context for this model.
     ///
     /// The model must live for at least as long as the context, but many contexts can be created
