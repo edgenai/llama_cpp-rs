@@ -343,7 +343,7 @@ impl LlamaModel {
             inner: Arc::new(LlamaSessionInner {
                 model: self.clone(),
                 ctx: Mutex::new(LlamaContextInner { ptr: ctx }),
-                tokens: Mutex::new(Vec::new()),
+                tokens: RwLock::new(Vec::new()),
                 last_batch_size: AtomicUsize::new(0),
                 max_batch,
                 params: session_params,
