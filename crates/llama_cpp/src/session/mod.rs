@@ -471,7 +471,7 @@ impl LlamaSession {
             assert_eq!(copy_size, set_size);
         }
 
-        *copy.inner.tokens.blocking_lock() = self.inner.tokens.blocking_lock().clone();
+        *block_on(copy.inner.tokens.write()) = block_on(self.inner.tokens.read()).clone();
         copy.inner.last_batch_size.store(
             self.inner.last_batch_size.load(Ordering::SeqCst),
             Ordering::SeqCst,
