@@ -13,10 +13,10 @@ use crate::{LlamaModel, Token};
 /// If this structure is dropped, the off thread is stopped.
 pub struct CompletionHandle {
     /// The token receiver bound to the off thread.
-    rx: UnboundedReceiver<Token>,
+    pub(super) rx: UnboundedReceiver<Token>,
 
     /// The model that this handle's LlamaSession is associated with.
-    model: LlamaModel,
+    pub(super) model: LlamaModel,
 }
 
 impl CompletionHandle {
