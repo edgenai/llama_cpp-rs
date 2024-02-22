@@ -35,7 +35,7 @@ impl CompletionHandle {
     }
 
     /// Iterate or stream over the generated tokens represented as byte pieces.
-    pub fn into_byte_iter(self) -> ByteCompletion {
+    pub fn into_byte_completion(self) -> ByteCompletion {
         ByteCompletion(self)
     }
 
@@ -48,7 +48,7 @@ impl CompletionHandle {
     /// Joining the returned strings will yield the same output as
     /// [`LlamaModel::decode_tokens`], with invalid UTF-8 replaced with the
     /// unicode replacement character: "�".
-    pub fn into_string_iter(self) -> StringCompletion {
+    pub fn into_string_completion(self) -> StringCompletion {
         StringCompletion {
             completion: ByteCompletion(self),
             decoder: TokenDecoder::new(),
@@ -198,7 +198,7 @@ impl TokenDecoder {
 /// A wrapper struct around a `CompletionHandle`, yielding `String` tokens for
 /// each byte piece of the model's output.
 ///
-/// See [`CompletionHandle::into_string_iter`] for more information.
+/// See [`CompletionHandle::into_string_completion`] for more information.
 pub struct StringCompletion {
     completion: ByteCompletion,
     decoder: TokenDecoder,
