@@ -15,8 +15,9 @@ use tokio::sync::{
 use tracing::{error, info, trace, warn};
 
 use llama_cpp_sys::{
-    llama_beam_search, llama_context, llama_decode, llama_free, llama_get_logits_ith,
-    llama_kv_cache_seq_rm, llama_token_data, llama_token_data_array,
+    llama_beam_search, llama_context, llama_copy_state_data, llama_decode, llama_free,
+    llama_get_logits_ith, llama_get_state_size, llama_kv_cache_seq_rm, llama_set_state_data,
+    llama_token_data, llama_token_data_array,
 };
 
 use crate::{detail, LlamaModel, LlamaTokenizationError, Sampler, Token};
@@ -60,6 +61,7 @@ pub struct LlamaSession {
 }
 
 /// The cloned part of a [`LlamaSession`].
+// NOTE: Changes made here may need to be reflected in LlamaSession::deep_copy
 pub(crate) struct LlamaSessionInner {
     /// The model this session was created from.
     pub(crate) model: LlamaModel,
@@ -75,6 +77,9 @@ pub(crate) struct LlamaSessionInner {
 
     /// Max batch size.
     pub(crate) max_batch: u32,
+
+    /// The parameters this session was created with
+    pub(crate) params: SessionParams,
 }
 
 /// An error raised while advancing the context in a [`LlamaSession`].
@@ -345,6 +350,11 @@ impl LlamaSession {
         self.inner.model.clone()
     }
 
+    /// Returns the parameters this session was created with.
+    pub fn params(&self) -> &SessionParams {
+        &self.inner.params
+    }
+
     /// Returns the number of tokens currently in this session's context
     pub fn context_size(&self) -> usize {
         block_on(self.inner.tokens.read()).len()
@@ -441,6 +451,42 @@ impl LlamaSession {
         tokio::task::spawn_blocking(move || session.set_context(ctx))
             .await
             .unwrap()
+    }
+
+    /// Creates a new [`LlamaSession`] with the same contents as `self`. The returned
+    /// [`LlamaSession`] can be used and modified independently from `self`.
+    ///
+    /// This differs from [`LlamaSession::clone`] in that [`LlamaSession::clone`] creates a new
+    /// reference to the same underlying [`LlamaSession`].
+    pub fn deep_copy(&self) -> Result<LlamaSession, LlamaContextError> {
+        let ctx = self.inner.ctx.blocking_lock();
+
+        #[allow(unused_mut)]
+        let mut copy = self.model().create_session(self.inner.params.clone())?;
+
+        let size = unsafe { llama_get_state_size(ctx.ptr) };
+        let mut buf = vec![0; size];
+
+        // SAFETY: `llama_copy_state_data` and `llama_set_state_data` should never write/read more than
+        // `llama_get_state_size` bytes, so `buf` should be big enough.
+        //
+        // `copy` was created from the same model as `self` and with the same parameters.
+        unsafe {
+            let copy_size = llama_copy_state_data(ctx.ptr, buf.as_mut_ptr());
+            assert!(copy_size <= size);
+            let set_size = llama_set_state_data(copy.inner.ctx.blocking_lock().ptr, buf.as_mut_ptr());
+            assert_eq!(copy_size, set_size);
+        }
+
+        // NOTE: Any changes to the fields of a LlamaSession may require that
+        // those changes are mirrored here
+        *block_on(copy.inner.tokens.write()) = block_on(self.inner.tokens.read()).clone();
+        copy.inner.last_batch_size.store(
+            self.inner.last_batch_size.load(Ordering::SeqCst),
+            Ordering::SeqCst,
+        );
+
+        Ok(copy)
     }
 }
 
