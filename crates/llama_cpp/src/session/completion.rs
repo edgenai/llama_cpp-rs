@@ -1,3 +1,5 @@
+//! Module containing [`CompletionHandle`] and associated types.
+
 use std::{
     pin::Pin,
     task::{Context, Poll},
@@ -32,10 +34,20 @@ impl CompletionHandle {
         self.rx.recv().await
     }
 
+    /// Iterate or stream over the generated tokens represented as byte pieces.
     pub fn into_byte_iter(self) -> ByteCompletion {
         ByteCompletion(self)
     }
 
+    /// Iterate or stream over the generated tokens represented as [`String`] pieces.
+    ///
+    /// This iterator will defer outputting a UTF-8 codepoint until it recieves
+    /// the entire codepoint. This ensures that Emojis and other codepoints that
+    /// are split across multiple tokens are decoded correctly.
+    ///
+    /// Joining the returned strings will yield the same output as
+    /// [`LlamaModel::decode_tokens`], with invalid UTF-8 replaced with the
+    /// unicode replacement character: "�".
     pub fn into_string_iter(self) -> StringCompletion {
         StringCompletion {
             completion: ByteCompletion(self),
@@ -43,11 +55,15 @@ impl CompletionHandle {
         }
     }
 
-    pub fn into_string(mut self) -> String {
-        let tokens: Vec<Token> = self.by_ref().collect();
-        self.model.decode_tokens(tokens)
+    /// Converts a `CompletionHandle` into a `String` containing the full model
+    /// output.
+    pub fn into_string(self) -> String {
+        self.model.clone().decode_tokens(self)
     }
 
+
+    /// Converts a `CompletionHandle` into a `String` containing the full model
+    /// output, asynchronously.
     pub async fn into_string_async(mut self) -> String {
         let mut tokens = Vec::new();
 
@@ -79,6 +95,9 @@ impl Stream for CompletionHandle {
     }
 }
 
+
+/// A wrapper struct around a `CompletionHandle`, yielding `Vec<u8>` byte pieces
+/// for each token of the model's output.
 pub struct ByteCompletion(CompletionHandle);
 
 impl Iterator for ByteCompletion {
@@ -102,15 +121,27 @@ impl Stream for ByteCompletion {
     }
 }
 
+/// A struct used to decode `Vec<u8>` tokens from a [`CompletionHandle`] into [`String`] tokens.
+///
+/// This struct can handle merging split UTF-8 codepoints.
 struct TokenDecoder {
+    /// A buffer used to store incomplete codepoints between calls to
+    /// [`TokenDecoder::add_token`]
     buf: Vec<u8>,
 }
 
 impl TokenDecoder {
+    /// Creates a new [`TokenDecoder`].
     fn new() -> TokenDecoder {
         TokenDecoder { buf: Vec::new() }
     }
 
+    /// Adds a token to the decoder and returns a full [`String`] representation
+    /// of it if possible.
+    ///
+    /// If the token has a trailing incomplete UTF-8 sequence, this method will
+    /// not include it in the output string. Instead, the incomplete sequence
+    /// will be stored in the decoder's buffer for the next call to this method.
     fn add_token(&mut self, token: &[u8]) -> String {
         let mut token = token;
         let mut out = String::new();
@@ -151,6 +182,9 @@ impl TokenDecoder {
         out
     }
 
+    /// Returns the last partial UTF-8 sequence stored in the decoder.
+    ///
+    /// If there is no partial UTF-8 sequence stored, this method will return `None`.
     fn last_part(&mut self) -> Option<String> {
         (!self.buf.is_empty()).then(|| {
             let out = String::from_utf8_lossy(&self.buf).to_string();
@@ -160,6 +194,11 @@ impl TokenDecoder {
     }
 }
 
+
+/// A wrapper struct around a `CompletionHandle`, yielding `String` tokens for
+/// each byte piece of the model's output.
+///
+/// See [`CompletionHandle::into_string_iter`] for more information.
 pub struct StringCompletion {
     completion: ByteCompletion,
     decoder: TokenDecoder,

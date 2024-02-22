@@ -19,12 +19,12 @@ use llama_cpp_sys::{
 
 use crate::{detail, LlamaModel, LlamaTokenizationError, Sampler, Token};
 
-mod completion;
+pub mod completion;
 mod params;
 
 use crate::batch::Batch;
 pub use params::*;
-pub use completion::*;
+pub use completion::CompletionHandle;
 
 /// The inner part of a [`LlamaSession`].
 ///

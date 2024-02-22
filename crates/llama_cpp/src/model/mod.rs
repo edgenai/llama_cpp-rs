@@ -291,6 +291,9 @@ impl LlamaModel {
         .to_bytes()
     }
 
+    /// Converts the provided token into a `Vec<u8>` piece, using the model's vocabulary.
+    ///
+    /// Panics if the model is invalid.
     pub fn token_to_byte_piece(&self, token: Token) -> Vec<u8> {
         let initial_size = 8u16;
         let mut buffer = vec![0u8; usize::from(initial_size)];
@@ -326,6 +329,7 @@ impl LlamaModel {
         String::from_utf8_lossy(&self.token_to_byte_piece(token)).to_string()
     }
 
+    /// Converts an iterator of tokens into
     pub fn decode_tokens(&self, tokens: impl IntoIterator<Item = impl Borrow<Token>>) -> String {
         let mut buf: Vec<u8> = vec![0; 1024];
         let mut i = 0;
