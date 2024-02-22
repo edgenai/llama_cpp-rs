@@ -79,10 +79,10 @@
 use std::cmp::min;
 use std::ffi::{c_void, CStr, CString};
 use std::path::{Path, PathBuf};
+use std::ptr::slice_from_raw_parts;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::{ptr, thread};
-use std::ops::RemAssign;
 
 use derive_more::{Deref, DerefMut};
 use futures::executor::block_on;
@@ -91,7 +91,19 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{error, info, trace, warn};
 
-use llama_cpp_sys::{ggml_type, llama_backend_free, llama_backend_init, llama_batch, llama_batch_free, llama_batch_init, llama_beam_search, llama_context, llama_context_default_params, llama_context_params, llama_decode, llama_free, llama_free_model, llama_get_logits_ith, llama_load_model_from_file, llama_log_set, llama_model, llama_model_default_params, llama_model_params, llama_n_ctx_train, llama_n_embd, llama_n_vocab, llama_new_context_with_model, llama_split_mode, llama_split_mode_LLAMA_SPLIT_LAYER, llama_split_mode_LLAMA_SPLIT_NONE, llama_split_mode_LLAMA_SPLIT_ROW, llama_token_bos, llama_token_data, llama_token_data_array, llama_token_eos, llama_token_eot, llama_token_get_text, llama_token_middle, llama_token_nl, llama_token_prefix, llama_token_suffix, llama_token_to_piece, llama_tokenize};
+use llama_cpp_sys::{
+    ggml_numa_strategy_GGML_NUMA_STRATEGY_DISTRIBUTE, ggml_type, llama_backend_free,
+    llama_backend_init, llama_batch, llama_batch_free, llama_batch_init, llama_beam_search,
+    llama_context, llama_context_default_params, llama_context_params, llama_decode, llama_free,
+    llama_free_model, llama_get_embeddings_ith, llama_get_logits_ith, llama_kv_cache_clear,
+    llama_load_model_from_file, llama_log_set, llama_model, llama_model_default_params,
+    llama_model_params, llama_n_ctx_train, llama_n_embd, llama_n_vocab,
+    llama_new_context_with_model, llama_numa_init, llama_split_mode,
+    llama_split_mode_LLAMA_SPLIT_LAYER, llama_split_mode_LLAMA_SPLIT_NONE,
+    llama_split_mode_LLAMA_SPLIT_ROW, llama_token_bos, llama_token_data, llama_token_data_array,
+    llama_token_eos, llama_token_eot, llama_token_get_text, llama_token_middle, llama_token_nl,
+    llama_token_prefix, llama_token_suffix, llama_token_to_piece, llama_tokenize,
+};
 
 /// The standard sampler implementation.
 pub mod standard_sampler;
@@ -115,7 +127,10 @@ impl Backend {
     fn init() -> Self {
         unsafe {
             // SAFETY: This is only called when no models or sessions exist.
-            llama_backend_init(true);
+            llama_backend_init();
+
+            // TODO look into numa strategies, this should probably be part of the API
+            llama_numa_init(ggml_numa_strategy_GGML_NUMA_STRATEGY_DISTRIBUTE);
 
             // SAFETY: performs a simple assignment to static variables. Should only execute once
             // before any logs are made.
@@ -530,28 +545,104 @@ impl LlamaModel {
         })
     }
 
-    fn embeddings(
+    /// Performs embeddings decoding on the given batch and returns the result.
+    fn embeddings_decode(
+        &self,
+        context: *mut llama_context,
+        batch: &Batch,
+        input_count: usize,
+    ) -> Result<Vec<Vec<f32>>, LlamaContextError> {
+        let res = unsafe {
+            // clear previous kv_cache values (irrelevant for embeddings)
+            llama_kv_cache_clear(context);
+            llama_decode(context, batch.handle())
+        };
+
+        if res < 0 {
+            return Err(LlamaContextError::DecodeFailed(res));
+        }
+
+        let mut out = Vec::with_capacity(input_count);
+
+        for i in 0..input_count {
+            let embedding = unsafe {
+                let ptr = llama_get_embeddings_ith(context, i as i32);
+                slice_from_raw_parts(ptr, self.embedding_length)
+                    .as_ref()
+                    .ok_or(LlamaContextError::DecodeFailed(1))?
+            };
+
+            // normalize the embedding
+            let mut embed_vec = vec![0f32; self.embedding_length];
+            let sum = embedding
+                .iter()
+                .map(move |x| x * x)
+                .reduce(move |a, b| a + b)
+                .ok_or(LlamaContextError::DecodeFailed(2))?;
+
+            let norm = sum.sqrt();
+            for (i, value) in embedding.iter().enumerate() {
+                embed_vec[i] = value / norm;
+            }
+
+            out.push(embed_vec)
+        }
+
+        Ok(out)
+    }
+
+    /// Runs embeddings inference for the given inputs, returning the result.
+    pub fn embeddings(
         &self,
         inputs: &[impl AsRef<[u8]>],
-    ) -> Result<Vec<Vec<f32>>, LlamaTokenizationError> {
-        let input_res = inputs.iter().map(move |prompt| self.tokenize_bytes(prompt, true, false));
-        let mut input_tokens = vec![];
+    ) -> Result<Vec<Vec<f32>>, LlamaContextError> {
+        let input_res = inputs
+            .iter()
+            .map(move |prompt| self.tokenize_bytes(prompt, true, false));
+        let mut input_tokens = Vec::with_capacity(inputs.len());
+        let mut total_tokens = 0;
         let mut max_tokens = 0;
         for input in input_res {
             let tokens = input?;
+            total_tokens += tokens.len();
             if max_tokens < tokens.len() {
                 max_tokens = tokens.len();
             }
             input_tokens.push(tokens);
         }
-        let tokens = self.tokenize_bytes(prompt, true, false)?;
-        let max_batch = min(self.training_size, tokens.len());
-        let batch_tokens = tokens.chunks(max_batch);
 
-        let batch = Batch::new(max_batch, 0, )
-        let mut res = vec![];
+        let batch_capacity = min(self.training_size, total_tokens);
+        let mut batch = Batch::new(batch_capacity, 0, input_tokens.len());
+        let mut out = Vec::with_capacity(inputs.len());
 
-        Ok(res)
+        let context = unsafe {
+            // SAFETY: Stack constructor, always safe.
+            let mut params = llama_context_default_params();
+            params.embedding = true;
+            // SAFETY: due to `_model` being declared in the `LlamaContext`, `self` must live
+            // for at least the lifetime of `LlamaContext`.
+            llama_new_context_with_model(**self.model.try_read().unwrap(), params)
+        };
+
+        let mut batch_input_count = 0;
+        for input in input_tokens {
+            if batch.tokens() + input.len() > batch_capacity {
+                out.append(&mut self.embeddings_decode(context, &batch, batch_input_count)?);
+                batch.clear();
+                batch_input_count = 0;
+            }
+
+            for (i, token) in input.iter().enumerate() {
+                batch.add(*token, i, &[batch_input_count as i32], false);
+            }
+            batch_input_count += 1;
+        }
+
+        if 0 < batch_input_count {
+            out.append(&mut self.embeddings_decode(context, &batch, batch_input_count)?);
+        }
+
+        Ok(out)
     }
 
     /// Returns the beginning of sentence (BOS) token for this context.
@@ -1111,6 +1202,9 @@ pub struct SessionParams {
 
     /// whether to offload the KQV ops (including the KV cache) to GPU
     pub offload_kqv: bool,
+
+    /// whether to pool (sum) embedding results by sequence id (ignored if no pooling layer)
+    pub pooling: bool,
 }
 
 impl Default for SessionParams {
@@ -1140,6 +1234,7 @@ impl Default for SessionParams {
             type_v: c_defaults.type_v as u32,
             embedding: c_defaults.embedding,
             offload_kqv: c_defaults.offload_kqv,
+            pooling: c_defaults.do_pooling,
         }
     }
 }
@@ -1168,6 +1263,7 @@ impl From<SessionParams> for llama_context_params {
             logits_all: false, // Deprecated
             embedding: value.embedding,
             offload_kqv: value.offload_kqv,
+            do_pooling: value.pooling,
         }
     }
 }
@@ -1250,8 +1346,8 @@ impl Batch {
             let seq_ptr = *self.inner.seq_id.add(i);
 
             if !seq_ptr.is_null() {
-                for id in 0..sequence_ids.len() {
-                    seq_ptr.add(id).write(id as i32);
+                for (i, id) in sequence_ids.iter().enumerate() {
+                    seq_ptr.add(i).write(*id);
                 }
             }
         }
