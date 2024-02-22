@@ -40,6 +40,11 @@ impl CompletionHandle {
             decoder: TokenDecoder::new(),
         }
     }
+
+    pub fn into_string(mut self) -> String {
+        let tokens: Vec<Token> = self.by_ref().collect();
+        self.model.decode_tokens(tokens)
+    }
 }
 
 impl Iterator for CompletionHandle {
