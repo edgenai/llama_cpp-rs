@@ -88,7 +88,7 @@ mod tests {
                 .await
                 .unwrap();
             session
-                .advance_context_async("<|USER|>How would you approach the trolley problem?")
+                .advance_context_async("<|USER|>Hello!")
                 .await
                 .unwrap();
             session

@@ -79,6 +79,7 @@
 use llama_cpp_sys::{llama_context, llama_token_data_array};
 use thiserror::Error;
 
+mod batch;
 mod detail;
 mod model;
 mod session;

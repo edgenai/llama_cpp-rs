@@ -1,8 +1,10 @@
 //! Implements the [`LlamaModel`] struct
 
 use std::borrow::Borrow;
+use std::cmp::min;
 use std::ffi::{CStr, CString};
 use std::path::{Path, PathBuf};
+use std::ptr::slice_from_raw_parts;
 use std::sync::{atomic::AtomicUsize, Arc};
 
 use derive_more::{Deref, DerefMut};
@@ -13,10 +15,11 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 use llama_cpp_sys::{
-    llama_context_params, llama_free_model, llama_load_model_from_file, llama_model, llama_n_vocab,
-    llama_new_context_with_model, llama_token_bos, llama_token_eos, llama_token_eot,
-    llama_token_get_text, llama_token_middle, llama_token_nl, llama_token_prefix,
-    llama_token_suffix, llama_token_to_piece, llama_tokenize,
+    llama_context, llama_context_default_params, llama_context_params, llama_decode,
+    llama_free_model, llama_get_embeddings_ith, llama_kv_cache_clear, llama_load_model_from_file,
+    llama_model, llama_n_ctx_train, llama_n_embd, llama_n_vocab, llama_new_context_with_model,
+    llama_token_bos, llama_token_eos, llama_token_eot, llama_token_get_text, llama_token_middle,
+    llama_token_nl, llama_token_prefix, llama_token_suffix, llama_token_to_piece, llama_tokenize,
 };
 
 use crate::{
@@ -27,6 +30,7 @@ use crate::{
 mod backend;
 mod params;
 
+use crate::batch::Batch;
 use backend::BackendRef;
 pub use params::*;
 
@@ -122,6 +126,12 @@ pub struct LlamaModel {
 
     /// For infilling, the token for the end of the infill.
     eot_token: Token,
+
+    /// For embeddings, the length of a single embeddings vector.
+    embedding_length: usize,
+
+    /// The number of tokens in the context the model was trained with.
+    training_size: usize,
 }
 
 unsafe impl Send for LlamaModel {}
@@ -186,6 +196,8 @@ impl LlamaModel {
                 infill_middle_token: Token(unsafe { llama_token_middle(model) }),
                 infill_suffix_token: Token(unsafe { llama_token_suffix(model) }),
                 eot_token: Token(unsafe { llama_token_eot(model) }),
+                embedding_length: unsafe { llama_n_embd(model) } as usize,
+                training_size: unsafe { llama_n_ctx_train(model) } as usize,
             })
         }
     }
@@ -211,6 +223,8 @@ impl LlamaModel {
     pub fn tokenize_bytes(
         &self,
         content: impl AsRef<[u8]>,
+        add_bos: bool,
+        special: bool,
     ) -> Result<Vec<Token>, LlamaTokenizationError> {
         let content = content.as_ref();
 
@@ -236,8 +250,8 @@ impl LlamaModel {
                 content.len() as i32,
                 out_buf.as_mut_ptr() as *mut i32,
                 out_buf.capacity() as i32,
-                false,
-                false,
+                add_bos,
+                special,
             )
         };
 
@@ -383,6 +397,106 @@ impl LlamaModel {
         })
     }
 
+    /// Performs embeddings decoding on the given batch and returns the result.
+    fn embeddings_decode(
+        &self,
+        context: *mut llama_context,
+        batch: &Batch,
+        input_count: usize,
+    ) -> Result<Vec<Vec<f32>>, LlamaContextError> {
+        let res = unsafe {
+            // clear previous kv_cache values (irrelevant for embeddings)
+            llama_kv_cache_clear(context);
+            llama_decode(context, batch.handle())
+        };
+
+        if res < 0 {
+            return Err(LlamaContextError::DecodeFailed(res));
+        }
+
+        let mut out = Vec::with_capacity(input_count);
+
+        for i in 0..input_count {
+            let embedding = unsafe {
+                let ptr = llama_get_embeddings_ith(context, i as i32);
+                slice_from_raw_parts(ptr, self.embedding_length)
+                    .as_ref()
+                    .ok_or(LlamaContextError::DecodeFailed(1))?
+            };
+
+            // normalize the embedding
+            let mut embed_vec = vec![0f32; self.embedding_length];
+            let sum = embedding
+                .iter()
+                .map(move |x| x * x)
+                .reduce(move |a, b| a + b)
+                .ok_or(LlamaContextError::DecodeFailed(2))?;
+
+            let norm = sum.sqrt();
+            for (i, value) in embedding.iter().enumerate() {
+                embed_vec[i] = value / norm;
+            }
+
+            out.push(embed_vec)
+        }
+
+        Ok(out)
+    }
+
+    /// Runs embeddings inference for the given inputs, returning the result.
+    pub fn embeddings(
+        &self,
+        inputs: &[impl AsRef<[u8]>],
+    ) -> Result<Vec<Vec<f32>>, LlamaContextError> {
+        let input_res = inputs
+            .iter()
+            .map(move |prompt| self.tokenize_bytes(prompt, true, false));
+        let mut input_tokens = Vec::with_capacity(inputs.len());
+        let mut total_tokens = 0;
+        let mut max_tokens = 0;
+        for input in input_res {
+            let tokens = input?;
+            total_tokens += tokens.len();
+            if max_tokens < tokens.len() {
+                max_tokens = tokens.len();
+            }
+            input_tokens.push(tokens);
+        }
+
+        let batch_capacity = min(self.training_size, total_tokens);
+        let mut batch = Batch::new(batch_capacity, 0, input_tokens.len());
+        let mut out = Vec::with_capacity(inputs.len());
+
+        let context = unsafe {
+            // SAFETY: Stack constructor, always safe.
+            let mut params = llama_context_default_params();
+            params.embedding = true;
+            // SAFETY: due to `_model` being declared in the `LlamaContext`, `self` must live
+            // for at least the lifetime of `LlamaContext`.
+            llama_new_context_with_model(**self.model.try_read().unwrap(), params)
+        };
+
+        let mut batch_input_count = 0;
+        for input in input_tokens {
+            if batch.tokens() + input.len() > batch_capacity {
+                out.append(&mut self.embeddings_decode(context, &batch, batch_input_count)?);
+                batch.clear();
+                batch_input_count = 0;
+            }
+
+            for (i, token) in input.iter().enumerate() {
+                batch.add(*token, i, &[batch_input_count as i32], false);
+            }
+            batch_input_count += 1;
+        }
+
+        if 0 < batch_input_count {
+            out.append(&mut self.embeddings_decode(context, &batch, batch_input_count)?);
+        }
+
+        Ok(out)
+    }
+
     /// Returns the beginning of sentence (BOS) token for this context.
     pub fn bos(&self) -> Token {
         self.bos_token
@@ -421,5 +535,15 @@ impl LlamaModel {
     /// Returns the number of possible values a [`Token`] can have for this model.
     pub fn vocabulary_size(&self) -> usize {
         self.vocabulary_size
+    }
+
+    /// Returns the length of a single embedding vector for this model.
+    pub fn embed_len(&self) -> usize {
+        self.embedding_length
+    }
+
+    /// Returns the number of tokens in the context the model was trained with.
+    pub fn train_len(&self) -> usize {
+        self.training_size
     }
 }

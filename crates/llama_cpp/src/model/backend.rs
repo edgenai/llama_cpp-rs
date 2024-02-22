@@ -7,7 +7,10 @@ use futures::executor::block_on;
 use tokio::sync::Mutex;
 use tracing::error;
 
-use llama_cpp_sys::{llama_backend_free, llama_backend_init, llama_log_set};
+use llama_cpp_sys::{
+    ggml_numa_strategy_GGML_NUMA_STRATEGY_DISTRIBUTE, llama_backend_free, llama_backend_init,
+    llama_log_set, llama_numa_init,
+};
 
 use crate::detail;
 
@@ -30,7 +33,10 @@ impl Backend {
     fn init() -> Self {
         unsafe {
             // SAFETY: This is only called when no models or sessions exist.
-            llama_backend_init(true);
+            llama_backend_init();
+
+            // TODO look into numa strategies, this should probably be part of the API
+            llama_numa_init(ggml_numa_strategy_GGML_NUMA_STRATEGY_DISTRIBUTE);
 
             // SAFETY: performs a simple assignment to static variables. Should only execute once
             // before any logs are made.

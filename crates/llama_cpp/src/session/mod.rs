@@ -19,13 +19,12 @@ use llama_cpp_sys::{
 
 use crate::{detail, LlamaModel, LlamaTokenizationError, Sampler, Token};
 
-mod batch;
 mod completion;
 mod params;
 
-use batch::Batch;
-pub use completion::*;
+use crate::batch::Batch;
 pub use params::*;
+pub use completion::*;
 
 /// The inner part of a [`LlamaSession`].
 ///
@@ -209,7 +208,7 @@ impl LlamaSession {
         let tokens = self
             .inner
             .model
-            .tokenize_bytes(ctx.as_ref())?
+            .tokenize_bytes(ctx.as_ref(), false, false)?
             .into_boxed_slice();
 
         self.advance_context_with_tokens(tokens)
@@ -418,7 +417,7 @@ impl LlamaSession {
         let tokens = self
             .inner
             .model
-            .tokenize_bytes(ctx.as_ref())?
+            .tokenize_bytes(ctx.as_ref(), false, false)?
             .into_boxed_slice();
 
         self.set_context_to_tokens(tokens)
