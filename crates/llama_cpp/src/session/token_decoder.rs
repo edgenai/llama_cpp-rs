@@ -67,5 +67,3 @@ impl TokenDecoder {
         self.inner
     }
 }
-
-impl LlamaModel {}

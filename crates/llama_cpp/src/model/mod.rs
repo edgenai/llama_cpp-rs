@@ -277,43 +277,43 @@ impl LlamaModel {
         .to_bytes()
     }
 
-    /// Converts the provided token into a [`String`] piece, using the model's vocabulary.
-    ///
-    /// Panics if the model is invalid.
-    pub fn token_to_piece(&self, token: Token) -> String {
+    pub fn token_to_byte_piece(&self, token: Token) -> Vec<u8> {
         let initial_size = 8u16;
-        let mut buffer = vec![std::os::raw::c_char::from(0); usize::from(initial_size)];
+        let mut buffer = vec![0u8; usize::from(initial_size)];
         let size = unsafe {
             llama_token_to_piece(
                 **self.model.try_read().unwrap(),
                 token.0,
-                buffer.as_mut_ptr(),
+                buffer.as_mut_ptr() as *mut i8,
                 std::os::raw::c_int::from(initial_size),
             )
         };
 
-        buffer.resize(size.unsigned_abs() as usize + 1, 0);
+        buffer.resize(size.unsigned_abs() as usize, 0);
         if size < 0 {
             let size = unsafe {
                 llama_token_to_piece(
                     **self.model.try_read().unwrap(),
                     token.0,
-                    buffer.as_mut_ptr(),
+                    buffer.as_mut_ptr() as *mut i8,
                     std::os::raw::c_int::from(buffer.len() as i32 - 1),
                 )
             };
             assert_eq!(
-                size as usize + 1,
+                size as usize,
                 buffer.len(),
                 "Buffer length doesn't match"
             );
         }
 
-        let c_string = unsafe {
-            // SAFETY: llama_token_to_piece should always return a null terminated buffer
-            CString::from_vec_with_nul_unchecked(buffer.iter().map(move |x| *x as u8).collect())
-        };
-        c_string.to_string_lossy().to_string()
+        buffer
+    }
+
+    /// Converts the provided token into a [`String`] piece, using the model's vocabulary.
+    ///
+    /// Panics if the model is invalid.
+    pub fn token_to_piece(&self, token: Token) -> String {
+        String::from_utf8_lossy(&self.token_to_byte_piece(token)).to_string()
     }
 
     pub fn decode_tokens(&self, tokens: impl IntoIterator<Item = impl Borrow<Token>>) -> String {
