@@ -299,11 +299,7 @@ impl LlamaModel {
                     std::os::raw::c_int::from(buffer.len() as i32 - 1),
                 )
             };
-            assert_eq!(
-                size as usize,
-                buffer.len(),
-                "Buffer length doesn't match"
-            );
+            assert_eq!(size as usize, buffer.len(), "Buffer length doesn't match");
         }
 
         buffer

@@ -1,10 +1,12 @@
-use std::{pin::Pin, task::{Context, Poll}};
+use std::{
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 use futures::{executor::block_on, Stream};
 use tokio::sync::mpsc::{error::TryRecvError, UnboundedReceiver};
 
 use crate::{LlamaModel, Token};
-
 
 /// A handle (and channel) to an ongoing completion job on an off thread.
 ///
@@ -45,6 +47,16 @@ impl CompletionHandle {
         let tokens: Vec<Token> = self.by_ref().collect();
         self.model.decode_tokens(tokens)
     }
+
+    pub async fn into_string_async(mut self) -> String {
+        let mut tokens = Vec::new();
+
+        while let Some(token) = self.next_token_async().await {
+            tokens.push(token);
+        }
+
+        self.model.decode_tokens(tokens)
+    }
 }
 
 impl Iterator for CompletionHandle {
@@ -73,7 +85,9 @@ impl Iterator for ByteCompletion {
     type Item = Vec<u8>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(|token| self.0.model.token_to_byte_piece(token))
+        self.0
+            .next()
+            .map(|token| self.0.model.token_to_byte_piece(token))
     }
 }
 
@@ -82,7 +96,9 @@ impl Stream for ByteCompletion {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let res = std::pin::pin!(&mut self.0).poll_next(cx);
-        res.map(|optional_token| optional_token.map(|token| self.0.model.token_to_byte_piece(token)))
+        res.map(|optional_token| {
+            optional_token.map(|token| self.0.model.token_to_byte_piece(token))
+        })
     }
 }
 
@@ -92,9 +108,7 @@ struct TokenDecoder {
 
 impl TokenDecoder {
     fn new() -> TokenDecoder {
-        TokenDecoder {
-            buf: Vec::new(),
-        }
+        TokenDecoder { buf: Vec::new() }
     }
 
     fn add_token(&mut self, token: &[u8]) -> String {
@@ -115,8 +129,7 @@ impl TokenDecoder {
                 }
                 Err(err) => {
                     let valid_len = err.valid_up_to();
-                    out
-                        .push_str(unsafe { std::str::from_utf8_unchecked(&token[..valid_len]) });
+                    out.push_str(unsafe { std::str::from_utf8_unchecked(&token[..valid_len]) });
 
                     if let Some(len) = err.error_len() {
                         out.push(char::REPLACEMENT_CHARACTER);
