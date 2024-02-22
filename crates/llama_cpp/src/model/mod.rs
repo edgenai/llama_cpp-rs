@@ -1,5 +1,6 @@
 //! Implements the [`LlamaModel`] struct
 
+use std::borrow::Borrow;
 use std::ffi::{CStr, CString};
 use std::path::{Path, PathBuf};
 use std::sync::{atomic::AtomicUsize, Arc};
@@ -220,7 +221,7 @@ impl LlamaModel {
             });
         }
 
-        let mut out_buf = Vec::with_capacity(content.len());
+        let mut out_buf = Vec::with_capacity(content.len() + 1);
 
         let n_written_tokens = unsafe {
             // SAFETY: The pointer ranges specified here are always valid, and `n_written_tokens`
@@ -315,47 +316,38 @@ impl LlamaModel {
         c_string.to_string_lossy().to_string()
     }
 
-    pub fn decode_tokens<T: AsRef<Token>>(&self, tokens: impl IntoIterator<Item = T>) -> String {
-        let mut buf: Vec<i8> = Vec::new();
+    pub fn decode_tokens(&self, tokens: impl IntoIterator<Item = impl Borrow<Token>>) -> String {
+        let mut buf: Vec<u8> = vec![0; 1024];
         let mut i = 0;
-        let model = **block_on(self.model.read());
 
-        for token in tokens.into_iter() {
-            let token = *token.as_ref();
+        let mut tokens = tokens.into_iter();
+        let mut token = tokens.next();
+
+        while let Some(t) = token.as_ref().map(Borrow::borrow) {
             let token_buf = &mut buf[i..];
 
             let size = unsafe {
+                // SAFETY: Casting `*mut u8` to `*mut i8` is safe because `u8` and
+                // `i8` have the same size and alignment. The length of token_buf is
+                // accurate for this reason.
                 llama_cpp_sys::llama_token_to_piece(
-                    model,
-                    token.0,
-                    token_buf.as_mut_ptr(),
+                    **block_on(self.model.read()),
+                    t.0,
+                    token_buf.as_mut_ptr() as *mut i8,
                     token_buf.len() as i32,
                 )
             };
 
             if size >= 0 {
                 i += size as usize;
-                continue;
+                token = tokens.next();
+            } else {
+                buf.resize(buf.len() + (-size) as usize + 1, 0);
+                buf.resize(buf.capacity(), 0);
             }
-
-            buf.extend(std::iter::repeat(0).take((-size) as usize));
-            let extra_len = buf.capacity() - buf.len();
-            buf.extend(std::iter::repeat(0).take(extra_len));
-
-            let token_buf = &mut buf[i..];
-
-            let size = unsafe {
-                llama_cpp_sys::llama_token_to_piece(
-                    model,
-                    token.0,
-                    token_buf.as_mut_ptr(),
-                    token_buf.len() as i32,
-                )
-            };
-            assert!(size >= 0);
         }
 
-        let buf: Vec<u8> = unsafe { std::mem::transmute(buf) };
+        buf.truncate(i);
         String::from_utf8_lossy(&buf).to_string()
     }
 
