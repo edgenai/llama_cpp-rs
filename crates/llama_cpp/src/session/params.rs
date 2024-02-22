@@ -59,6 +59,9 @@ pub struct SessionParams {
 
     /// whether to offload the KQV ops (including the KV cache) to GPU
     pub offload_kqv: bool,
+
+    /// whether to pool (sum) embedding results by sequence id (ignored if no pooling layer)
+    pub pooling: bool,
 }
 
 impl Default for SessionParams {
@@ -88,6 +91,7 @@ impl Default for SessionParams {
             type_v: c_defaults.type_v as u32,
             embedding: c_defaults.embedding,
             offload_kqv: c_defaults.offload_kqv,
+            pooling: c_defaults.do_pooling,
         }
     }
 }
@@ -116,6 +120,7 @@ impl From<SessionParams> for llama_context_params {
             logits_all: false, // Deprecated
             embedding: value.embedding,
             offload_kqv: value.offload_kqv,
+            do_pooling: value.pooling,
         }
     }
 }

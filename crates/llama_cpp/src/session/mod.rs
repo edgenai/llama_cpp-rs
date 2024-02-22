@@ -10,7 +10,7 @@ use futures::executor::block_on;
 use thiserror::Error;
 use tokio::sync::{
     mpsc::{unbounded_channel, UnboundedReceiver},
-    Mutex, RwLock
+    Mutex, RwLock,
 };
 use tracing::{error, info, trace, warn};
 
@@ -22,10 +22,9 @@ use llama_cpp_sys::{
 
 use crate::{detail, LlamaModel, LlamaTokenizationError, Sampler, Token};
 
-mod batch;
 mod params;
 
-use batch::Batch;
+use crate::batch::Batch;
 pub use params::*;
 
 /// The inner part of a [`LlamaSession`].
@@ -210,7 +209,7 @@ impl LlamaSession {
         let tokens = self
             .inner
             .model
-            .tokenize_bytes(ctx.as_ref())?
+            .tokenize_bytes(ctx.as_ref(), false, false)?
             .into_boxed_slice();
 
         self.advance_context_with_tokens(tokens)
@@ -413,7 +412,7 @@ impl LlamaSession {
         let tokens = self
             .inner
             .model
-            .tokenize_bytes(ctx.as_ref())?
+            .tokenize_bytes(ctx.as_ref(), false, false)?
             .into_boxed_slice();
 
         self.set_context_to_tokens(tokens)
@@ -473,7 +472,8 @@ impl LlamaSession {
         unsafe {
             let copy_size = llama_copy_state_data(ctx.ptr, buf.as_mut_ptr());
             assert!(copy_size <= size);
-            let set_size = llama_set_state_data(copy.inner.ctx.blocking_lock().ptr, buf.as_mut_ptr());
+            let set_size =
+                llama_set_state_data(copy.inner.ctx.blocking_lock().ptr, buf.as_mut_ptr());
             assert_eq!(copy_size, set_size);
         }
 

@@ -89,8 +89,8 @@ impl Batch {
             let seq_ptr = *self.inner.seq_id.add(i);
 
             if !seq_ptr.is_null() {
-                for id in 0..sequence_ids.len() {
-                    seq_ptr.add(id).write(id as i32);
+                for (i, id) in sequence_ids.iter().enumerate() {
+                    seq_ptr.add(i).write(*id);
                 }
             }
         }
