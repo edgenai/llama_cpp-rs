@@ -1,6 +1,7 @@
 //! Module containing [`CompletionHandle`] and associated types.
 
 use std::{
+    borrow::Borrow,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -35,8 +36,9 @@ impl CompletionHandle {
     }
 
     /// Iterate or stream over the generated tokens represented as byte pieces.
-    pub fn into_byte_completion(self) -> ByteCompletion {
-        ByteCompletion(self)
+    pub fn into_bytes(self) -> TokensToBytes<CompletionHandle> {
+        let model = self.model.clone();
+        TokensToBytes::new(self, model)
     }
 
     /// Iterate or stream over the generated tokens represented as [`String`] pieces.
@@ -48,11 +50,9 @@ impl CompletionHandle {
     /// Joining the returned strings will yield the same output as
     /// [`LlamaModel::decode_tokens`], with invalid UTF-8 replaced with the
     /// unicode replacement character: "�".
-    pub fn into_string_completion(self) -> StringCompletion {
-        StringCompletion {
-            completion: ByteCompletion(self),
-            decoder: TokenDecoder::new(),
-        }
+    pub fn into_strings(self) -> TokensToStrings<CompletionHandle> {
+        let model = self.model.clone();
+        TokensToStrings::new(self, model)
     }
 
     /// Converts a `CompletionHandle` into a `String` containing the full model
@@ -60,7 +60,6 @@ impl CompletionHandle {
     pub fn into_string(self) -> String {
         self.model.clone().decode_tokens(self)
     }
-
 
     /// Converts a `CompletionHandle` into a `String` containing the full model
     /// output, asynchronously.
@@ -95,28 +94,45 @@ impl Stream for CompletionHandle {
     }
 }
 
+/// A wrapper struct around an iterator or stream of tokens, yielding `Vec<u8>`
+/// byte pieces for each token.
+pub struct TokensToBytes<I> {
+    inner: I,
+    model: LlamaModel,
+}
 
-/// A wrapper struct around a `CompletionHandle`, yielding `Vec<u8>` byte pieces
-/// for each token of the model's output.
-pub struct ByteCompletion(CompletionHandle);
-
-impl Iterator for ByteCompletion {
-    type Item = Vec<u8>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0
-            .next()
-            .map(|token| self.0.model.token_to_byte_piece(token))
+impl<I> TokensToBytes<I> {
+    /// Creates a new [`TokensToBytes`] iterator/stream from an inner
+    /// iterator/stream and a [`LlamaModel`] used to convert each token into its
+    /// byte sequence.
+    pub fn new(inner: I, model: LlamaModel) -> TokensToBytes<I> {
+        Self { inner, model }
     }
 }
 
-impl Stream for ByteCompletion {
+impl<I: Iterator> Iterator for TokensToBytes<I>
+where
+    I::Item: Borrow<Token>,
+{
+    type Item = Vec<u8>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner
+            .next()
+            .map(|token| self.model.token_to_byte_piece(*token.borrow()))
+    }
+}
+
+impl<I: Stream + Unpin> Stream for TokensToBytes<I>
+where
+    I::Item: Borrow<Token>,
+{
     type Item = Vec<u8>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let res = std::pin::pin!(&mut self.0).poll_next(cx);
+        let res = std::pin::pin!(&mut self.inner).poll_next(cx);
         res.map(|optional_token| {
-            optional_token.map(|token| self.0.model.token_to_byte_piece(token))
+            optional_token.map(|token| self.model.token_to_byte_piece(*token.borrow()))
         })
     }
 }
@@ -194,17 +210,31 @@ impl TokenDecoder {
     }
 }
 
-
 /// A wrapper struct around a `CompletionHandle`, yielding `String` tokens for
 /// each byte piece of the model's output.
 ///
 /// See [`CompletionHandle::into_string_completion`] for more information.
-pub struct StringCompletion {
-    completion: ByteCompletion,
+pub struct TokensToStrings<I> {
+    completion: TokensToBytes<I>,
     decoder: TokenDecoder,
 }
 
-impl Iterator for StringCompletion {
+impl<I> TokensToStrings<I> {
+    /// Creates a new [`TokensToStrings`] iterator/stream from an inner
+    /// iterator/stream and a [`LlamaModel`] used to convert each token into its
+    /// byte sequence.
+    pub fn new(inner: I, model: LlamaModel) -> Self {
+        Self {
+            completion: TokensToBytes::new(inner, model),
+            decoder: TokenDecoder::new(),
+        }
+    }
+}
+
+impl<I: Iterator> Iterator for TokensToStrings<I>
+where
+    I::Item: Borrow<Token>,
+{
     type Item = String;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -216,7 +246,10 @@ impl Iterator for StringCompletion {
     }
 }
 
-impl Stream for StringCompletion {
+impl<I: Stream + Unpin> Stream for TokensToStrings<I>
+where
+    I::Item: Borrow<Token>,
+{
     type Item = String;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
