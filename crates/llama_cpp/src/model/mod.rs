@@ -561,12 +561,3 @@ impl LlamaModel {
         self.training_size
     }
 }
-
-/// Embeddings inference specific parameters.
-pub struct EmbeddingsParams {
-    /// number of threads to use for generation
-    pub n_threads: u32,
-
-    /// number of threads to use for batch processing
-    pub n_threads_batch: u32,
-}
