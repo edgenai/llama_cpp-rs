@@ -116,3 +116,23 @@ impl From<LlamaParams> for llama_model_params {
         }
     }
 }
+
+/// Embeddings inference specific parameters.
+pub struct EmbeddingsParams {
+    /// number of threads to use for generation
+    pub n_threads: u32,
+
+    /// number of threads to use for batch processing
+    pub n_threads_batch: u32,
+}
+
+impl Default for EmbeddingsParams {
+    fn default() -> Self {
+        let threads = num_cpus::get_physical() as u32 - 1;
+
+        Self {
+            n_threads: threads,
+            n_threads_batch: threads,
+        }
+    }
+}

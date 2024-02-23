@@ -13,6 +13,7 @@ use tokio::sync::Mutex;
 use tokio::sync::RwLock;
 use tracing::info;
 
+use backend::BackendRef;
 use llama_cpp_sys::{
     llama_context, llama_context_default_params, llama_context_params, llama_decode,
     llama_free_model, llama_get_embeddings_ith, llama_kv_cache_clear, llama_load_model_from_file,
@@ -20,7 +21,9 @@ use llama_cpp_sys::{
     llama_token_bos, llama_token_eos, llama_token_eot, llama_token_get_text, llama_token_middle,
     llama_token_nl, llama_token_prefix, llama_token_suffix, llama_token_to_piece, llama_tokenize,
 };
+pub use params::*;
 
+use crate::batch::Batch;
 use crate::{
     LlamaContextError, LlamaContextInner, LlamaInternalError, LlamaSession, LlamaSessionInner,
     SessionParams, Token,
@@ -28,10 +31,6 @@ use crate::{
 
 mod backend;
 mod params;
-
-use crate::batch::Batch;
-use backend::BackendRef;
-pub use params::*;
 
 /// An error raised while loading a llama.cpp model.
 #[derive(Error, Debug)]
@@ -269,6 +268,25 @@ impl LlamaModel {
         }
     }
 
+    /// Calls [`LlamaModel::tokenize_bytes`] for each element of the provided slice and returns the resulting vector.
+    pub fn tokenize_slice(
+        &self,
+        slice: &[impl AsRef<[u8]>],
+        add_bos: bool,
+        special: bool,
+    ) -> Result<Vec<Vec<Token>>, LlamaTokenizationError> {
+        let mut out = Vec::with_capacity(slice.len());
+        let iter = slice
+            .iter()
+            .map(move |prompt| self.tokenize_bytes(prompt, add_bos, special));
+
+        for item in iter {
+            out.push(item?)
+        }
+
+        Ok(out)
+    }
+
     /// Gets the byte string representation of `token` in this model's vocabulary.
     ///
     /// The returned slice is valid for the lifetime of this session, and typically encodes
@@ -411,41 +429,42 @@ impl LlamaModel {
         Ok(out)
     }
 
-    /// Runs embeddings inference for the given inputs, returning the result.
-    pub fn embeddings(
+    /// Runs embeddings inference for the given inputs vector, returning the result.
+    fn embeddings_process(
         &self,
-        inputs: &[impl AsRef<[u8]>],
+        inputs: Vec<Vec<Token>>,
+        params: EmbeddingsParams,
     ) -> Result<Vec<Vec<f32>>, LlamaContextError> {
-        let input_res = inputs
-            .iter()
-            .map(move |prompt| self.tokenize_bytes(prompt, true, false));
-        let mut input_tokens = Vec::with_capacity(inputs.len());
         let mut total_tokens = 0;
         let mut max_tokens = 0;
-        for input in input_res {
-            let tokens = input?;
+        for tokens in &inputs {
             total_tokens += tokens.len();
             if max_tokens < tokens.len() {
                 max_tokens = tokens.len();
             }
-            input_tokens.push(tokens);
         }
 
         let batch_capacity = min(self.training_size, total_tokens);
-        let mut batch = Batch::new(batch_capacity, 0, input_tokens.len());
+        let mut batch = Batch::new(batch_capacity, 0, inputs.len());
         let mut out = Vec::with_capacity(inputs.len());
 
         let context = unsafe {
             // SAFETY: Stack constructor, always safe.
-            let mut params = llama_context_default_params();
-            params.embedding = true;
+            let mut ctx_params = llama_context_default_params();
+            ctx_params.embedding = true;
+            ctx_params.n_threads = params.n_threads;
+            ctx_params.n_threads_batch = params.n_threads_batch;
             // SAFETY: due to `_model` being declared in the `LlamaContext`, `self` must live
             // for at least the lifetime of `LlamaContext`.
-            llama_new_context_with_model(**self.model.try_read().unwrap(), params)
+            llama_new_context_with_model(**self.model.try_read().unwrap(), ctx_params)
         };
 
+        if context.is_null() {
+            return Err(LlamaContextError::SessionFailed);
+        }
+
         let mut batch_input_count = 0;
-        for input in input_tokens {
+        for input in inputs {
             if batch.tokens() + input.len() > batch_capacity {
                 out.append(&mut self.embeddings_decode(context, &batch, batch_input_count)?);
                 batch.clear();
@@ -463,6 +482,33 @@ impl LlamaModel {
         }
 
         Ok(out)
+    }
+
+    /// Runs embeddings inference for the given inputs, returning the result.
+    pub fn embeddings(
+        &self,
+        inputs: &[impl AsRef<[u8]>],
+        params: EmbeddingsParams,
+    ) -> Result<Vec<Vec<f32>>, LlamaContextError> {
+        let inputs = self.tokenize_slice(inputs, true, false)?;
+        self.embeddings_process(inputs, params)
+    }
+
+    /// Runs embeddings inference for the given inputs, returning the result.
+    ///
+    /// This is a thin `tokio::spawn_blocking` wrapper around
+    /// [`LlamaModel::embeddings`].
+    pub async fn embeddings_async(
+        &self,
+        inputs: &[impl AsRef<[u8]>],
+        params: EmbeddingsParams,
+    ) -> Result<Vec<Vec<f32>>, LlamaContextError> {
+        let inputs = self.tokenize_slice(inputs, true, false)?;
+        let model = self.clone();
+
+        tokio::task::spawn_blocking(move || model.embeddings_process(inputs, params))
+            .await
+            .unwrap()
     }
 
     /// Returns the beginning of sentence (BOS) token for this context.
