@@ -85,12 +85,8 @@ impl Iterator for CompletionHandle {
 impl Stream for CompletionHandle {
     type Item = Token;
 
-    fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match self.rx.try_recv() {
-            Ok(token) => Poll::Ready(Some(token)),
-            Err(TryRecvError::Disconnected) => Poll::Ready(None),
-            Err(TryRecvError::Empty) => Poll::Pending,
-        }
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.rx.poll_recv(cx)
     }
 }
 
