@@ -1,5 +1,6 @@
 //! Implements the [`LlamaModel`] struct
 
+use std::borrow::Borrow;
 use std::cmp::min;
 use std::ffi::{CStr, CString};
 use std::path::{Path, PathBuf};
@@ -233,7 +234,9 @@ impl LlamaModel {
             });
         }
 
-        let mut out_buf = Vec::with_capacity(content.len());
+        // With add_bos=true and the string "🦙", having less than `length + 2`
+        // slots for tokens will incorrectly return a `LlamaInternalError`.
+        let mut out_buf = Vec::with_capacity(content.len() + 2);
 
         let n_written_tokens = unsafe {
             // SAFETY: The pointer ranges specified here are always valid, and `n_written_tokens`
@@ -308,43 +311,92 @@ impl LlamaModel {
         .to_bytes()
     }
 
-    /// Converts the provided token into a [`String`] piece, using the model's vocabulary.
+    /// Converts the provided token into a `Vec<u8>` piece, using the model's vocabulary.
     ///
     /// Panics if the model is invalid.
-    pub fn token_to_piece(&self, token: Token) -> String {
+    pub fn token_to_byte_piece(&self, token: Token) -> Vec<u8> {
         let initial_size = 8u16;
-        let mut buffer = vec![std::os::raw::c_char::from(0); usize::from(initial_size)];
+        let mut buffer = vec![0u8; usize::from(initial_size)];
         let size = unsafe {
+            // SAFETY: Casting `*mut u8` to `*mut i8` is safe because `u8` and
+            // `i8` have the same size and alignment.
             llama_token_to_piece(
                 **self.model.try_read().unwrap(),
                 token.0,
-                buffer.as_mut_ptr(),
+                buffer.as_mut_ptr() as *mut i8,
                 std::os::raw::c_int::from(initial_size),
             )
         };
 
-        buffer.resize(size.unsigned_abs() as usize + 1, 0);
+        buffer.resize(size.unsigned_abs() as usize, 0);
         if size < 0 {
             let size = unsafe {
+                // SAFETY: Casting `*mut u8` to `*mut i8` is safe because `u8`
+                // and `i8` have the same size and alignment. The length of
+                // buffer is accurate for this reason.
                 llama_token_to_piece(
                     **self.model.try_read().unwrap(),
                     token.0,
-                    buffer.as_mut_ptr(),
-                    std::os::raw::c_int::from(buffer.len() as i32 - 1),
+                    buffer.as_mut_ptr() as *mut i8,
+                    std::os::raw::c_int::from(buffer.len() as i32),
                 )
             };
-            assert_eq!(
-                size as usize + 1,
-                buffer.len(),
-                "Buffer length doesn't match"
-            );
+            assert_eq!(size as usize, buffer.len(), "Buffer length doesn't match");
         }
 
-        let c_string = unsafe {
-            // SAFETY: llama_token_to_piece should always return a null terminated buffer
-            CString::from_vec_with_nul_unchecked(buffer.iter().map(move |x| *x as u8).collect())
-        };
-        c_string.to_string_lossy().to_string()
+        buffer
+    }
+
+    /// Converts the provided token into a [`String`] piece, using the model's vocabulary.
+    ///
+    /// Note that this method cannot handle UTF-8 codepoints that are split into
+    /// multiple tokens correctly. Therefore, this method should be avoided for
+    /// decoding a sequence of tokens. Instead, use
+    /// [`LlamaModel::decode_tokens`] or [`crate::TokensToStrings`].
+    ///
+    /// Panics if the model is invalid.
+    pub fn token_to_piece(&self, token: Token) -> String {
+        String::from_utf8_lossy(&self.token_to_byte_piece(token)).to_string()
+    }
+
+    /// Decodes a sequence of tokens into a [`String`].
+    ///
+    /// Panics if the model is invalid.
+    pub fn decode_tokens(&self, tokens: impl IntoIterator<Item = impl Borrow<Token>>) -> String {
+        let mut buf: Vec<u8> = vec![0; 1024];
+        let mut i = 0;
+
+        let mut tokens = tokens.into_iter();
+        let mut token = tokens.next();
+
+        while let Some(t) = token.as_ref().map(Borrow::borrow) {
+            let token_buf = &mut buf[i..];
+
+            let size = unsafe {
+                // SAFETY: Casting `*mut u8` to `*mut i8` is safe because `u8` and
+                // `i8` have the same size and alignment. The length of token_buf is
+                // accurate for this reason.
+                llama_cpp_sys::llama_token_to_piece(
+                    **block_on(self.model.read()),
+                    t.0,
+                    token_buf.as_mut_ptr() as *mut i8,
+                    token_buf.len() as i32,
+                )
+            };
+
+            if size >= 0 {
+                // There was enough space; continue to the next token.
+                i += size as usize;
+                token = tokens.next();
+            } else {
+                // There was not enough space; grow the buffer and try again.
+                buf.resize(buf.len() + (-size) as usize + 1, 0);
+                buf.resize(buf.capacity(), 0);
+            }
+        }
+
+        buf.truncate(i);
+        String::from_utf8_lossy(&buf).to_string()
     }
 
     /// Creates a new evaluation context for this model.

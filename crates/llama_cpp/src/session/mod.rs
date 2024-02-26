@@ -8,10 +8,7 @@ use std::thread;
 
 use futures::executor::block_on;
 use thiserror::Error;
-use tokio::sync::{
-    mpsc::{unbounded_channel, UnboundedReceiver},
-    Mutex, RwLock,
-};
+use tokio::sync::{mpsc::unbounded_channel, Mutex, RwLock};
 use tracing::{error, info, trace, warn};
 
 use llama_cpp_sys::{
@@ -22,9 +19,12 @@ use llama_cpp_sys::{
 
 use crate::{detail, LlamaModel, LlamaTokenizationError, Sampler, Token};
 
+mod completion;
 mod params;
 
 use crate::batch::Batch;
+pub use completion::CompletionHandle;
+pub use completion::*;
 pub use params::*;
 
 /// The inner part of a [`LlamaSession`].
@@ -255,7 +255,10 @@ impl LlamaSession {
             );
         });
 
-        CompletionHandle { rx }
+        CompletionHandle {
+            rx,
+            model: self.model(),
+        }
     }
 
     /// Start completion.
@@ -340,7 +343,10 @@ impl LlamaSession {
             }
         });
 
-        CompletionHandle { rx }
+        CompletionHandle {
+            rx,
+            model: self.model(),
+        }
     }
 
     /// Returns the model this session was created from.
@@ -486,27 +492,5 @@ impl LlamaSession {
         );
 
         Ok(copy)
-    }
-}
-
-/// A handle (and channel) to an ongoing completion job on an off thread.
-///
-/// If this structure is dropped, the off thread is stopped.
-pub struct CompletionHandle {
-    /// The token receiver bound to the off thread.
-    rx: UnboundedReceiver<Token>,
-}
-
-impl CompletionHandle {
-    /// Blocks the current thread, resolving to the next completed token, or `None` if EOS is
-    /// reached.
-    pub fn next_token(&mut self) -> Option<Token> {
-        block_on(self.rx.recv())
-    }
-
-    /// Asynchronously yields the current thread, resolving to the next completed token, or `None`
-    /// if EOS is reached.
-    pub async fn next_token_async(&mut self) -> Option<Token> {
-        self.rx.recv().await
     }
 }
