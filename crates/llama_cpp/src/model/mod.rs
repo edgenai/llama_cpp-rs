@@ -338,7 +338,7 @@ impl LlamaModel {
                     **self.model.try_read().unwrap(),
                     token.0,
                     buffer.as_mut_ptr() as *mut i8,
-                    std::os::raw::c_int::from(buffer.len() as i32 - 1),
+                    std::os::raw::c_int::from(buffer.len() as i32),
                 )
             };
             assert_eq!(size as usize, buffer.len(), "Buffer length doesn't match");
