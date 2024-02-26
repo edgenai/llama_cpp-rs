@@ -234,7 +234,9 @@ impl LlamaModel {
             });
         }
 
-        let mut out_buf = Vec::with_capacity(content.len() + 1);
+        // With add_bos=true and the string "🦙", having less than `length + 2`
+        // slots for tokens will incorrectly return a `LlamaInternalError`.
+        let mut out_buf = Vec::with_capacity(content.len() + 2);
 
         let n_written_tokens = unsafe {
             // SAFETY: The pointer ranges specified here are always valid, and `n_written_tokens`
@@ -316,6 +318,8 @@ impl LlamaModel {
         let initial_size = 8u16;
         let mut buffer = vec![0u8; usize::from(initial_size)];
         let size = unsafe {
+            // SAFETY: Casting `*mut u8` to `*mut i8` is safe because `u8` and
+            // `i8` have the same size and alignment.
             llama_token_to_piece(
                 **self.model.try_read().unwrap(),
                 token.0,
@@ -327,6 +331,9 @@ impl LlamaModel {
         buffer.resize(size.unsigned_abs() as usize, 0);
         if size < 0 {
             let size = unsafe {
+                // SAFETY: Casting `*mut u8` to `*mut i8` is safe because `u8`
+                // and `i8` have the same size and alignment. The length of
+                // buffer is accurate for this reason.
                 llama_token_to_piece(
                     **self.model.try_read().unwrap(),
                     token.0,
@@ -342,12 +349,19 @@ impl LlamaModel {
 
     /// Converts the provided token into a [`String`] piece, using the model's vocabulary.
     ///
+    /// Note that this method cannot handle UTF-8 codepoints that are split into
+    /// multiple tokens correctly. Therefore, this method should be avoided for
+    /// decoding a sequence of tokens. Instead, use
+    /// [`LlamaModel::decode_tokens`] or [`crate::TokensToStrings`].
+    ///
     /// Panics if the model is invalid.
     pub fn token_to_piece(&self, token: Token) -> String {
         String::from_utf8_lossy(&self.token_to_byte_piece(token)).to_string()
     }
 
-    /// Converts an iterator of tokens into
+    /// Decodes a sequence of tokens into a [`String`].
+    ///
+    /// Panics if the model is invalid.
     pub fn decode_tokens(&self, tokens: impl IntoIterator<Item = impl Borrow<Token>>) -> String {
         let mut buf: Vec<u8> = vec![0; 1024];
         let mut i = 0;
@@ -371,9 +385,11 @@ impl LlamaModel {
             };
 
             if size >= 0 {
+                // There was enough space; continue to the next token.
                 i += size as usize;
                 token = tokens.next();
             } else {
+                // There was not enough space; grow the buffer and try again.
                 buf.resize(buf.len() + (-size) as usize + 1, 0);
                 buf.resize(buf.capacity(), 0);
             }
