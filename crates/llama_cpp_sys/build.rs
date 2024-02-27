@@ -1,5 +1,8 @@
 use std::env;
+use std::fs::File;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use cc::Build;
 use once_cell::sync::Lazy;
@@ -368,20 +371,74 @@ fn compile_cuda(cx: &mut Build, cxx: &mut Build, featless_cxx: Build) -> &'stati
 fn compile_metal(cx: &mut Build, cxx: &mut Build) {
     println!("Compiling Metal GGML..");
 
-    // TODO
-    println!("cargo:warning=Metal compilation and execution has not been properly tested yet");
-
     cx.define("GGML_USE_METAL", None);
     cxx.define("GGML_USE_METAL", None);
+
+    cx.define("GGML_METAL_EMBED_LIBRARY", None);
+    cxx.define("GGML_METAL_EMBED_LIBRARY", None);
 
     if !cfg!(debug_assertions) {
         cx.define("GGML_METAL_NDEBUG", None);
     }
 
+    // It's idomatic to use OUT_DIR for intermediate c/c++ artifacts
+    let out_dir = env::var("OUT_DIR").unwrap();
+
+    let ggml_metal_shader_path = LLAMA_PATH.join("ggml-metal.metal");
+
+    // Create a temporary assembly file that will allow for static linking to the metal shader.
+    let ggml_metal_embed_assembly_path = PathBuf::from(&out_dir).join("ggml-metal-embed.asm");
+    let mut ggml_metal_embed_assembly_file = File::create(&ggml_metal_embed_assembly_path)
+        .expect("Failed to open ggml-metal-embed.asm file");
+
+    // The contents of this file is directly copied from the llama.cpp Makefile
+    let ggml_metal_embed_assembly_code = format!(
+        ".section __DATA, __ggml_metallib\n\
+         .globl _ggml_metallib_start\n\
+         _ggml_metallib_start:\n\
+         .incbin \"{}\"\n\
+         .globl _ggml_metallib_end\n\
+         _ggml_metallib_end:\n",
+        ggml_metal_shader_path
+            .to_str()
+            .expect("Failed to convert path to string")
+    );
+
+    write!(
+        ggml_metal_embed_assembly_file,
+        "{}",
+        ggml_metal_embed_assembly_code
+    )
+    .expect("Failed to write ggml metal embed assembly code");
+
+    // Assemble the ggml metal embed code.
+    let ggml_metal_embed_object_path = PathBuf::from(&out_dir).join("ggml-metal-embed.o");
+    Command::new("as")
+        .arg(&ggml_metal_embed_assembly_path)
+        .arg("-o")
+        .arg(&ggml_metal_embed_object_path)
+        .status()
+        .expect("Failed to assemble ggml-metal-embed file");
+
+    // Create a static library for our metal embed code.
+    let ggml_metal_embed_library_path = PathBuf::from(&out_dir).join("libggml-metal-embed.a");
+    Command::new("ar")
+        .args(&[
+            "crus",
+            ggml_metal_embed_library_path.to_str().unwrap(),
+            ggml_metal_embed_object_path.to_str().unwrap(),
+        ])
+        .status()
+        .expect("Failed to create static library from ggml-metal-embed object file");
+
     println!("cargo:rustc-link-lib=framework=Metal");
     println!("cargo:rustc-link-lib=framework=Foundation");
     println!("cargo:rustc-link-lib=framework=MetalPerformanceShaders");
     println!("cargo:rustc-link-lib=framework=MetalKit");
+
+    // Link to our new static library for our metal embed code.
+    println!("cargo:rustc-link-search=native={}", &out_dir);
+    println!("cargo:rustc-link-lib=static=ggml-metal-embed");
 
     cx.include(LLAMA_PATH.join("ggml-metal.h"))
         .file(LLAMA_PATH.join("ggml-metal.m"));
