@@ -65,7 +65,7 @@ pub enum LlamaTokenizationError {
 
 /// The inner part of a [`LlamaModel`].
 ///
-/// This is a thin wrapper over an `Arc<RwLock<*mut llama_model>>`, which is used to share the
+/// This is a thin wrapper over an `Arc<*mut llama_model>`, which is used to share the
 /// model across threads.
 #[derive(Clone, Deref, DerefMut)]
 struct LlamaModelInner {
@@ -100,7 +100,7 @@ impl Drop for LlamaModelInner {
 #[derive(Clone)]
 pub struct LlamaModel {
     /// A handle to the inner model on the other side of the C FFI boundary.
-    model: Arc<RwLock<LlamaModelInner>>,
+    model: Arc<LlamaModelInner>,
 
     /// The size of this model's vocabulary, in tokens.
     vocabulary_size: usize,
@@ -183,10 +183,10 @@ impl LlamaModel {
             };
 
             Ok(Self {
-                model: Arc::new(RwLock::new(LlamaModelInner {
+                model: Arc::new(LlamaModelInner {
                     model,
                     _backend_ref: backend_ref,
-                })),
+                }),
                 vocabulary_size: vocabulary_size as usize,
                 bos_token: Token(unsafe { llama_token_bos(model) }),
                 eos_token: Token(unsafe { llama_token_eos(model) }),
@@ -246,7 +246,7 @@ impl LlamaModel {
             //
             // `out_buf` is a `Vec<Token>`, and `Token` is `#[repr(transparent)]` over an `i32`.
             llama_tokenize(
-                **self.model.try_read().unwrap(),
+                **self.model,
                 content.as_ptr() as *const i8,
                 content.len() as i32,
                 out_buf.as_mut_ptr() as *mut i32,
@@ -304,7 +304,7 @@ impl LlamaModel {
 
         unsafe {
             CStr::from_ptr(llama_token_get_text(
-                **self.model.try_read().unwrap(),
+                **self.model,
                 token.0,
             ))
         }
@@ -321,7 +321,7 @@ impl LlamaModel {
             // SAFETY: Casting `*mut u8` to `*mut i8` is safe because `u8` and
             // `i8` have the same size and alignment.
             llama_token_to_piece(
-                **self.model.try_read().unwrap(),
+                **self.model,
                 token.0,
                 buffer.as_mut_ptr() as *mut i8,
                 std::os::raw::c_int::from(initial_size),
@@ -335,7 +335,7 @@ impl LlamaModel {
                 // and `i8` have the same size and alignment. The length of
                 // buffer is accurate for this reason.
                 llama_token_to_piece(
-                    **self.model.try_read().unwrap(),
+                    **self.model,
                     token.0,
                     buffer.as_mut_ptr() as *mut i8,
                     std::os::raw::c_int::from(buffer.len() as i32),
@@ -377,7 +377,7 @@ impl LlamaModel {
                 // `i8` have the same size and alignment. The length of token_buf is
                 // accurate for this reason.
                 llama_cpp_sys::llama_token_to_piece(
-                    **block_on(self.model.read()),
+                    **self.model,
                     t.0,
                     token_buf.as_mut_ptr() as *mut i8,
                     token_buf.len() as i32,
@@ -417,7 +417,7 @@ impl LlamaModel {
         let ctx = unsafe {
             // SAFETY: due to `_model` being declared in the `LlamaContext`, `self` must live
             // for at least the lifetime of `LlamaContext`.
-            llama_new_context_with_model(**self.model.try_read().unwrap(), params)
+            llama_new_context_with_model(**self.model, params)
         };
         if ctx.is_null() {
             return Err(LlamaContextError::SessionFailed);
@@ -508,7 +508,7 @@ impl LlamaModel {
             ctx_params.n_threads_batch = params.n_threads_batch;
             // SAFETY: due to `_model` being declared in the `LlamaContext`, `self` must live
             // for at least the lifetime of `LlamaContext`.
-            llama_new_context_with_model(**self.model.try_read().unwrap(), ctx_params)
+            llama_new_context_with_model(**self.model, ctx_params)
         };
 
         if context.is_null() {

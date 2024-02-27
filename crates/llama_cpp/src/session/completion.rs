@@ -7,7 +7,7 @@ use std::{
 };
 
 use futures::{executor::block_on, Stream};
-use tokio::sync::mpsc::{error::TryRecvError, UnboundedReceiver};
+use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::{LlamaModel, Token};
 
