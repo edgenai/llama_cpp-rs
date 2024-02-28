@@ -11,7 +11,7 @@ publish = true
 
 [dependencies]
 derive_more = "0.99.17"
-futures = "0.3.30"
+futures = { workspace = true }
 llama_cpp_sys = { version = "^0.3.0", path = "../llama_cpp_sys", default-features = false }
 num_cpus = "1.16.0"
 thiserror = "1.0.57"
