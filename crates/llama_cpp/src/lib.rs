@@ -114,5 +114,10 @@ pub struct LlamaInternalError;
 /// This needs to be documented!
 pub trait Sampler {
     /// This needs to be documented!
-    fn sample(&self, context: *mut llama_context, candidates_p: llama_token_data_array) -> Token;
+    fn sample(
+        &mut self,
+        context: *mut llama_context,
+        tokens: &[Token],
+        candidates_p: llama_token_data_array,
+    ) -> Token;
 }

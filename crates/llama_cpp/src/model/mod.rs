@@ -302,13 +302,7 @@ impl LlamaModel {
             token.0
         );
 
-        unsafe {
-            CStr::from_ptr(llama_token_get_text(
-                **self.model,
-                token.0,
-            ))
-        }
-        .to_bytes()
+        unsafe { CStr::from_ptr(llama_token_get_text(**self.model, token.0)) }.to_bytes()
     }
 
     /// Converts the provided token into a `Vec<u8>` piece, using the model's vocabulary.
