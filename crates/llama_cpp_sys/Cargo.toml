@@ -7,7 +7,7 @@ authors = ["Dakota Thompson <me@scriptis.net>", "Pedro Valente <pedro.amaral.val
 repository = "https://github.com/edgenai/llama_cpp-rs"
 license = "MIT OR Apache-2.0"
 readme = "../../README.md"
-exclude = ["**/tests", "**/scripts", "**/examples", "**/prompts", "**/gguf-py", "**/.devops"]
+exclude = ["thirdparty/**/tests", "thirdparty/**/scripts", "thirdparty/**/examples", "thirdparty/**/prompts", "thirdparty/**/gguf-py", "thirdparty/**/.devops", "thirdparty/**/docs", "thirdparty/**/media"]
 publish = true
 links = "llama"
 
