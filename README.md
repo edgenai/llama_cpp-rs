@@ -22,13 +22,16 @@ ctx.advance_context("This is the story of a man named Stanley.").unwrap();
 let max_tokens = 1024;
 let mut decoded_tokens = 0;
 
-// `ctx.get_completions` creates a worker thread that generates tokens. When the completion
+// `ctx.start_completing_with` creates a worker thread that generates tokens. When the completion
 // handle is dropped, tokens stop generating!
-let mut completions = ctx.get_completions();
+let mut completions = ctx.start_completing_with(StandardSampler::default(), 1024).into_strings();
 
-while let Some(next_token) = completions.next_token() {
-    println!("{}", String::from_utf8_lossy(&*next_token.detokenize()));
+for completion in completions {
+    print!("{completion}");
+    let _ = io::stdout().flush();
+
     decoded_tokens += 1;
+
     if decoded_tokens > max_tokens {
         break;
     }

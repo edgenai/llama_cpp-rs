@@ -377,6 +377,7 @@ dependencies = [
 name = "llama_cpp_tests"
 version = "0.3.0"
 dependencies = [
+ "futures",
  "llama_cpp",
  "tokio",
 ]
