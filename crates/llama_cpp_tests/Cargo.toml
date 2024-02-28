@@ -7,7 +7,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 futures = { workspace = true }
-llama_cpp = { version = "^0.3.0", path = "../llama_cpp", default-features = false, features = ["native", "compat"] }
+llama_cpp = { version = "^0.3.1", path = "../llama_cpp", default-features = false, features = ["native", "compat"] }
 tokio = { workspace = true, features = ["full"] }
 
 [features]
