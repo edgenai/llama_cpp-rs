@@ -71,7 +71,7 @@ mod tests {
             let mut params = LlamaParams::default();
 
             if cfg!(any(feature = "vulkan", feature = "cuda", feature = "metal")) {
-                params.n_gpu_layers = u32::MAX;
+                params.n_gpu_layers = i32::MAX as u32;
             }
 
             let model = LlamaModel::load_from_file_async(model, params)

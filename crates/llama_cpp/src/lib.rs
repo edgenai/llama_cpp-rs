@@ -16,7 +16,7 @@
 //!
 //! // A `LlamaModel` holds the weights shared across many _sessions_; while your model may be
 //! // several gigabytes large, a session is typically a few dozen to a hundred megabytes!
-//! let mut ctx = model.create_session(SessionParams::default()).unwrap();
+//! let mut ctx = model.create_session(SessionParams::default()).expect("Failed to create session");
 //!
 //! // You can feed anything that implements `AsRef<[u8]>` into the model's context.
 //! ctx.advance_context("This is the story of a man named Stanley.").unwrap();

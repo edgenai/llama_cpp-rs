@@ -9,11 +9,11 @@ ML experience required!
 
 ```rust
 // Create a model from anything that implements `AsRef<Path>`:
-let model = LlamaModel::load_from_file("path_to_model.gguf").expect("Could not load model");
+let model = LlamaModel::load_from_file("path_to_model.gguf", LlamaParams::default()).expect("Could not load model");
 
 // A `LlamaModel` holds the weights shared across many _sessions_; while your model may be
 // several gigabytes large, a session is typically a few dozen to a hundred megabytes!
-let mut ctx = model.create_session();
+let mut ctx = model.create_session(SessionParams::default()).expect("Failed to create session");
 
 // You can feed anything that implements `AsRef<[u8]>` into the model's context.
 ctx.advance_context("This is the story of a man named Stanley.").unwrap();
