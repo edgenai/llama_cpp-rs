@@ -165,7 +165,7 @@ use crate::{Sampler, Token};
 // }
 
 /// Functions which change how a [`SoftmaxSampler`] selects its next token.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum SamplerStage {
     /// Divide the logits by this value. Ranges from 0 to 2. Lower values yield a more
@@ -224,21 +224,15 @@ pub enum SamplerStage {
 }
 
 #[derive(Clone, Debug)]
-pub struct MirostatParams {
-    tau: f32,
-    eta: f32,
-    mu: f32,
-}
-
-#[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum TokenSelector {
     Softmax,
     Greedy,
-    MirostatV1(MirostatParams),
-    MirostatV2(MirostatParams),
+    MirostatV1 { tau: f32, eta: f32, m: i32, mu: f32 },
+    MirostatV2 { tau: f32, eta: f32, mu: f32 },
 }
 
-/// Randomly samples a token after applying multiple [`SamplerStage`]'s to it.
+/// Selects a token with a [`TokenSelector`] after applying multiple [`SamplerStage`]'s to it.
 #[derive(Clone, Debug)]
 pub struct StandardSampler {
     stages: Vec<SamplerStage>,
@@ -336,21 +330,12 @@ impl Sampler for StandardSampler {
             let id = match &mut self.token_selector {
                 TokenSelector::Softmax => llama_sample_token(context, p_ptr),
                 TokenSelector::Greedy => llama_sample_token_greedy(context, p_ptr),
-                TokenSelector::MirostatV1(params) => llama_sample_token_mirostat(
-                    context,
-                    p_ptr,
-                    params.tau,
-                    params.eta,
-                    100,
-                    addr_of_mut!(params.mu),
-                ),
-                TokenSelector::MirostatV2(params) => llama_sample_token_mirostat_v2(
-                    context,
-                    p_ptr,
-                    params.tau,
-                    params.eta,
-                    addr_of_mut!(params.mu),
-                ),
+                TokenSelector::MirostatV1 { tau, eta, m, mu } => {
+                    llama_sample_token_mirostat(context, p_ptr, *tau, *eta, *m, addr_of_mut!(*mu))
+                }
+                TokenSelector::MirostatV2 { tau, eta, mu } => {
+                    llama_sample_token_mirostat_v2(context, p_ptr, *tau, *eta, addr_of_mut!(*mu))
+                }
             };
 
             Token(id)
