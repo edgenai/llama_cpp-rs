@@ -363,7 +363,7 @@ dependencies = [
 
 [[package]]
 name = "llama_cpp_sys"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "ash",
  "bindgen",
