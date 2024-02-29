@@ -262,7 +262,7 @@ impl LlamaSession {
     }
 
     /// Start completion.
-    pub fn start_completing_with<S>(
+    pub fn start_completing_with(
         &mut self,
         mut sampler: Sampler,
         max_predictions: usize,

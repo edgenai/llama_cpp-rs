@@ -16,7 +16,7 @@
 //!
 //! // A `LlamaModel` holds the weights shared across many _sessions_; while your model may be
 //! // several gigabytes large, a session is typically a few dozen to a hundred megabytes!
-//! let mut ctx = model.create_session(SessionParams::default()).unwrap();
+//! let mut ctx = model.create_session(SessionParams::default()).expect("Failed to create session");
 //!
 //! // You can feed anything that implements `AsRef<[u8]>` into the model's context.
 //! ctx.advance_context("This is the story of a man named Stanley.").unwrap();
@@ -25,13 +25,14 @@
 //! let max_tokens = 1024;
 //! let mut decoded_tokens = 0;
 //!
-//! // `ctx.get_completions_with` creates a worker thread that generates tokens. When the completion
+//! // `ctx.start_completing_with` creates a worker thread that generates tokens. When the completion
 //! // handle is dropped, tokens stop generating!
 //!
-//! let mut completions = ctx.start_completing_with(StandardSampler::default(), 1024);
+//! let mut completions = ctx.start_completing_with(StandardSampler::default(), 1024).into_strings();
 //!
-//! while let Some(next_token) = completions.next_token() {
-//!     println!("{}", String::from_utf8_lossy(&*next_token.detokenize()));
+//! for completion in completions {
+//!     print!("{completion}");
+//!     let _ = io::stdout().flush();
 //!
 //!     decoded_tokens += 1;
 //!
@@ -81,12 +82,12 @@ use thiserror::Error;
 mod batch;
 mod detail;
 mod model;
-mod session;
 mod sampler;
+mod session;
 
 pub use model::*;
-pub use session::*;
 pub use sampler::*;
+pub use session::*;
 
 /// A single token produced or consumed by a [`LlamaModel`], without its associated context.
 ///

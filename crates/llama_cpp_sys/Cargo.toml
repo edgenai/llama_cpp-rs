@@ -1,12 +1,13 @@
 [package]
 name = "llama_cpp_sys"
-version = "0.3.0"
+version = "0.3.1"
 description = "Automatically-generated bindings to llama.cpp's C API"
 edition = "2021"
 authors = ["Dakota Thompson <me@scriptis.net>", "Pedro Valente <pedro.amaral.valente@gmail.com>"]
 repository = "https://github.com/edgenai/llama_cpp-rs"
 license = "MIT OR Apache-2.0"
 readme = "../../README.md"
+exclude = ["thirdparty/**/tests", "thirdparty/**/scripts", "thirdparty/**/examples", "thirdparty/**/prompts", "thirdparty/**/gguf-py", "thirdparty/**/.devops", "thirdparty/**/docs", "thirdparty/**/media"]
 publish = true
 links = "llama"
 

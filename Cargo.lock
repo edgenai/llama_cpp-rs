@@ -350,7 +350,7 @@ checksum = "01cda141df6706de531b6c46c3a33ecca755538219bd484262fa09410c13539c"
 
 [[package]]
 name = "llama_cpp"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "derive_more",
  "futures",
@@ -363,7 +363,7 @@ dependencies = [
 
 [[package]]
 name = "llama_cpp_sys"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "ash",
  "bindgen",
@@ -377,6 +377,7 @@ dependencies = [
 name = "llama_cpp_tests"
 version = "0.3.0"
 dependencies = [
+ "futures",
  "llama_cpp",
  "tokio",
 ]

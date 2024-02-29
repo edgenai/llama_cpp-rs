@@ -9,11 +9,13 @@ mod tests {
     use std::io::Write;
     use std::time::Duration;
 
+    use futures::StreamExt;
     use tokio::select;
     use tokio::time::Instant;
 
-    use llama_cpp::standard_sampler::Sampler;
-    use llama_cpp::{LlamaModel, LlamaParams, SessionParams};
+    use llama_cpp::{
+        CompletionHandle, LlamaModel, LlamaParams, Sampler, SessionParams, TokensToStrings,
+    };
 
     async fn list_models() -> Vec<String> {
         let dir = std::env::var("LLAMA_CPP_TEST_MODELS").unwrap_or_else(|_| {
@@ -70,7 +72,7 @@ mod tests {
             let mut params = LlamaParams::default();
 
             if cfg!(any(feature = "vulkan", feature = "cuda", feature = "metal")) {
-                params.n_gpu_layers = u32::MAX;
+                params.n_gpu_layers = i32::MAX as u32;
             }
 
             let model = LlamaModel::load_from_file_async(model, params)
@@ -96,7 +98,9 @@ mod tests {
                 .await
                 .unwrap();
 
-            let mut completions = session.start_completing_with(Sampler::default(), 1024);
+            let mut completions = session
+                .start_completing_with(Sampler::default(), 1024)
+                .into_strings();
             let timeout_by = Instant::now() + Duration::from_secs(500);
 
             println!();
@@ -106,15 +110,12 @@ mod tests {
                     _ = tokio::time::sleep_until(timeout_by) => {
                         break;
                     }
-                    completion = completions.next_token_async() => {
-                        if let Some(token) = completion {
-                            if token == model.eos() {
-                                break;
-                            }
-
-                            let formatted = model.token_to_piece(token);
-                            print!("{formatted}");
+                    completion = <TokensToStrings<CompletionHandle> as StreamExt>::next(&mut completions) => {
+                        if let Some(completion) = completion {
+                            print!("{completion}");
                             let _ = io::stdout().flush();
+                        } else {
+                            break;
                         }
                         continue;
                     }
