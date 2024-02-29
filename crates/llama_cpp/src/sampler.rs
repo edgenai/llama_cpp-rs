@@ -7,9 +7,9 @@ use llama_cpp_sys::{
     llama_token, llama_token_data_array,
 };
 
-use crate::{Sampler, Token};
+use crate::Token;
 
-/// Functions which change how a [`SoftmaxSampler`] selects its next token.
+/// Functions which change how a [`Sampler`] selects its next token.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum SamplerStage {
@@ -80,23 +80,23 @@ enum TokenSelector {
 
 /// Selects a token with a [`TokenSelector`] after applying multiple [`SamplerStage`]'s to it.
 #[derive(Clone, Debug)]
-pub struct StandardSampler {
+pub struct Sampler {
     stages: Vec<SamplerStage>,
     min_keep: usize,
     token_selector: TokenSelector,
 }
 
-impl StandardSampler {
-    pub fn new_softmax(stages: Vec<SamplerStage>, min_keep: usize) -> StandardSampler {
-        StandardSampler {
+impl Sampler {
+    pub fn new_softmax(stages: Vec<SamplerStage>, min_keep: usize) -> Sampler {
+        Sampler {
             stages,
             min_keep,
             token_selector: TokenSelector::Softmax,
         }
     }
 
-    pub fn new_greedy() -> StandardSampler {
-        StandardSampler {
+    pub fn new_greedy() -> Sampler {
+        Sampler {
             stages: Vec::new(),
             min_keep: 0,
             token_selector: TokenSelector::Greedy,
@@ -109,8 +109,8 @@ impl StandardSampler {
         tau: f32,
         eta: f32,
         m: i32,
-    ) -> StandardSampler {
-        StandardSampler {
+    ) -> Sampler {
+        Sampler {
             stages,
             min_keep,
             token_selector: TokenSelector::Mirostat {
@@ -127,8 +127,8 @@ impl StandardSampler {
         min_keep: usize,
         tau: f32,
         eta: f32,
-    ) -> StandardSampler {
-        StandardSampler {
+    ) -> Sampler {
+        Sampler {
             stages,
             min_keep,
             token_selector: TokenSelector::MirostatV2 {
@@ -140,7 +140,7 @@ impl StandardSampler {
     }
 }
 
-impl Default for StandardSampler {
+impl Default for Sampler {
     fn default() -> Self {
         Self {
             stages: vec![
@@ -161,9 +161,9 @@ impl Default for StandardSampler {
     }
 }
 
-impl Sampler for StandardSampler {
+impl Sampler {
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    fn sample(
+    pub fn sample(
         &mut self,
         context: *mut llama_context,
         tokens: &[Token],
