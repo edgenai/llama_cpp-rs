@@ -13,9 +13,8 @@ mod tests {
     use tokio::select;
     use tokio::time::Instant;
 
-    use llama_cpp::{
-        CompletionHandle, LlamaModel, LlamaParams, Sampler, SessionParams, TokensToStrings,
-    };
+    use llama_cpp::standard_sampler::StandardSampler;
+    use llama_cpp::{LlamaModel, LlamaParams, SessionParams};
 
     async fn list_models() -> Vec<String> {
         let dir = std::env::var("LLAMA_CPP_TEST_MODELS").unwrap_or_else(|_| {
@@ -99,7 +98,7 @@ mod tests {
                 .unwrap();
 
             let mut completions = session
-                .start_completing_with(Sampler::default(), 1024)
+                .start_completing_with(StandardSampler::default(), 1024)
                 .into_strings();
             let timeout_by = Instant::now() + Duration::from_secs(500);
 

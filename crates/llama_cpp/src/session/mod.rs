@@ -264,9 +264,12 @@ impl LlamaSession {
     /// Start completion.
     pub fn start_completing_with(
         &mut self,
-        mut sampler: Sampler,
+        mut sampler: S,
         max_predictions: usize,
-    ) -> CompletionHandle {
+    ) -> CompletionHandle
+    where
+        S: Sampler + Send + Sync + 'static,
+    {
         let (tx, rx) = unbounded_channel();
         let history_size = self.context_size();
         let session = self.clone();

@@ -77,17 +77,19 @@
 
 #![warn(missing_docs)]
 
+use llama_cpp_sys::{llama_context, llama_token_data_array};
 use thiserror::Error;
 
 mod batch;
 mod detail;
 mod model;
-mod sampler;
 mod session;
 
 pub use model::*;
-pub use sampler::*;
 pub use session::*;
+
+/// The standard sampler implementation.
+pub mod standard_sampler;
 
 /// A single token produced or consumed by a [`LlamaModel`], without its associated context.
 ///
@@ -109,3 +111,14 @@ pub struct Token(pub i32);
 #[derive(Error, Debug)]
 #[error("an internal assertion failed in llama.cpp; check `tracing` output.")]
 pub struct LlamaInternalError;
+
+/// This needs to be documented!
+pub trait Sampler {
+    /// This needs to be documented!
+    fn sample(
+        &mut self,
+        context: *mut llama_context,
+        tokens: &[Token],
+        candidates_p: llama_token_data_array,
+    ) -> Token;
+}
