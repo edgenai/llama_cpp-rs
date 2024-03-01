@@ -7,6 +7,7 @@
 mod tests {
     use std::io;
     use std::io::Write;
+    use std::path::Path;
     use std::time::Duration;
 
     use futures::StreamExt;
@@ -18,17 +19,8 @@ mod tests {
         CompletionHandle, EmbeddingsParams, LlamaModel, LlamaParams, SessionParams, TokensToStrings,
     };
 
-    async fn list_models() -> Vec<String> {
-        let dir = std::env::var("LLAMA_CPP_TEST_MODELS").unwrap_or_else(|_| {
-            eprintln!(
-                "LLAMA_CPP_TEST_MODELS environment variable not set. \
-                Please set this to the directory containing one or more GGUF models."
-            );
-
-            std::process::exit(1)
-        });
-
-        let dir = std::path::Path::new(&dir);
+    async fn list_models(dir: impl AsRef<Path>) -> Vec<String> {
+        let dir = dir.as_ref();
 
         if !dir.is_dir() {
             panic!("\"{}\" is not a directory", dir.to_string_lossy());
@@ -55,7 +47,14 @@ mod tests {
     #[ignore]
     #[tokio::test]
     async fn load_models() {
-        let models = list_models().await;
+        let dir = std::env::var("LLAMA_CPP_TEST_MODELS").unwrap_or_else(|_| {
+            panic!(
+                "LLAMA_CPP_TEST_MODELS environment variable not set. \
+                Please set this to the directory containing one or more GGUF models."
+            );
+        });
+
+        let models = list_models(dir).await;
 
         for model in models {
             println!("Loading model: {}", model);
@@ -67,7 +66,14 @@ mod tests {
 
     #[tokio::test]
     async fn execute_completions() {
-        let models = list_models().await;
+        let dir = std::env::var("LLAMA_CPP_TEST_MODELS").unwrap_or_else(|_| {
+            panic!(
+                "LLAMA_CPP_TEST_MODELS environment variable not set. \
+                Please set this to the directory containing one or more GGUF models."
+            );
+        });
+
+        let models = list_models(dir).await;
 
         for model in models {
             let mut params = LlamaParams::default();
@@ -129,42 +135,44 @@ mod tests {
 
     #[tokio::test]
     async fn embed() {
-        let path = std::env::var("LLAMA_EMBED_MODEL").unwrap_or_else(|_| {
-            eprintln!(
-                "LLAMA_EMBED_MODEL environment variable not set. \
-                Please set this to a path of an embedding GGUF models"
+        let dir = std::env::var("LLAMA_EMBED_MODELS_DIR").unwrap_or_else(|_| {
+            panic!(
+                "LLAMA_EMBED_MODELS_DIR environment variable not set. \
+                Please set this to the directory containing one or more embedding GGUF models."
             );
-
-            std::process::exit(1)
         });
 
-        let params = LlamaParams::default();
-        let model = LlamaModel::load_from_file_async(path, params)
-            .await
-            .expect("Failed to load model");
+        let models = list_models(dir).await;
 
-        let mut input = vec![];
+        for model in models {
+            let params = LlamaParams::default();
+            let model = LlamaModel::load_from_file_async(model, params)
+                .await
+                .expect("Failed to load model");
 
-        for _phrase_idx in 0..2 {
-            let mut phrase = String::new();
-            for _word_idx in 0..3000 {
-                phrase.push_str("word ");
+            let mut input = vec![];
+
+            for _phrase_idx in 0..2 {
+                let mut phrase = String::new();
+                for _word_idx in 0..3000 {
+                    phrase.push_str("word ");
+                }
+                phrase.truncate(phrase.len() - 1);
+                input.push(phrase);
             }
-            phrase.truncate(phrase.len() - 1);
-            input.push(phrase);
-        }
 
-        let params = EmbeddingsParams::default();
-        let res = model
-            .embeddings_async(&input, params)
-            .await
-            .expect("Failed to infer embeddings");
+            let params = EmbeddingsParams::default();
+            let res = model
+                .embeddings_async(&input, params)
+                .await
+                .expect("Failed to infer embeddings");
 
-        for embedding in &res {
-            assert!(embedding[0].is_normal(), "Embedding value isn't normal");
-            assert!(embedding[0] >= 0f32, "Embedding value isn't normalised");
-            assert!(embedding[0] <= 1f32, "Embedding value isn't normalised");
+            for embedding in &res {
+                assert!(embedding[0].is_normal(), "Embedding value isn't normal");
+                assert!(embedding[0] >= 0f32, "Embedding value isn't normalised");
+                assert!(embedding[0] <= 1f32, "Embedding value isn't normalised");
+            }
+            println!("{:?}", res[0]);
         }
-        println!("{:?}", res[0]);
     }
 }
