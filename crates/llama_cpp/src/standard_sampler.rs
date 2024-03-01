@@ -23,11 +23,12 @@ use crate::{Sampler, Token};
 #[non_exhaustive]
 pub enum SamplerStage {
     /// Divide the logits by this value. Ranges from 0 to 2. Lower values yield a more
-    /// deterministic output, and higher values yield a more random/creative output.
+    /// deterministic output, and higher values yield a more random/creative output. This should
+    /// not be used with [`SamplerStage::DynamicTemperature`].
     Temperature(f32),
 
     /// Divide the logits by a dynamically determined value between `min_temp`
-    /// and `max_temp`. `min_temp` and `max_temp` should from 0 to 2.
+    /// and `max_temp`. This should not be used with [`SamplerStage::Temperature`].
     ///
     /// This is determined by the equation:
     ///
@@ -41,10 +42,10 @@ pub enum SamplerStage {
     ///
     /// See: <https://arxiv.org/pdf/2309.02772.pdf>
     DynamicTemperature {
-        /// Determines the minimum possible temperature for this stage.
+        /// Determines the minimum possible temperature for this stage. Should be between 0 and 2.
         min_temp: f32,
 
-        /// Determines the maximum possible temperature for this stage.
+        /// Determines the maximum possible temperature for this stage. Should be between 0 and 2.
         max_temp: f32,
 
         /// The `exponent_val` parameter.
