@@ -30,7 +30,7 @@ pub enum SamplerStage {
     /// Divide the logits by a dynamically determined value between `min_temp`
     /// and `max_temp`. This should not be used with [`SamplerStage::Temperature`].
     ///
-    /// This is determined by the equation:
+    /// This determines the temperature using the equation:
     ///
     /// ```
     /// (current_entropy / maximum_entropy) ^ exponent_val
@@ -48,7 +48,8 @@ pub enum SamplerStage {
         /// Determines the maximum possible temperature for this stage. Should be between 0 and 2.
         max_temp: f32,
 
-        /// The `exponent_val` parameter.
+        /// The `exponent_val` parameter. 1 is a good starting point. Values less than 1 cause the
+        /// temperature to approach `max_temp` more quickly at small entropies.
         exponent_val: f32,
     },
 
