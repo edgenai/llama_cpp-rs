@@ -129,13 +129,19 @@ mod tests {
 
     #[tokio::test]
     async fn embed() {
+        let path = std::env::var("LLAMA_EMBED_MODEL").unwrap_or_else(|_| {
+            eprintln!(
+                "LLAMA_EMBED_MODEL environment variable not set. \
+                Please set this to a path of an embedding GGUF models"
+            );
+
+            std::process::exit(1)
+        });
+
         let params = LlamaParams::default();
-        let model = LlamaModel::load_from_file_async(
-            "/home/pedro/dev/models/embed/nomic-embed-text-v1.5.f16.gguf",
-            params,
-        )
-        .await
-        .expect("Failed to load model");
+        let model = LlamaModel::load_from_file_async(path, params)
+            .await
+            .expect("Failed to load model");
 
         let mut input = vec![];
 
