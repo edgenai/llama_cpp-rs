@@ -12,7 +12,7 @@ use futures::executor::block_on;
 use thiserror::Error;
 use tokio::sync::Mutex;
 use tokio::sync::RwLock;
-use tracing::info;
+use tracing::{info, trace, warn};
 
 use backend::BackendRef;
 use llama_cpp_sys::{
@@ -453,26 +453,34 @@ impl LlamaModel {
                 let ptr = llama_get_embeddings_ith(context, i as i32);
                 slice_from_raw_parts(ptr, self.embedding_length)
                     .as_ref()
-                    .ok_or(LlamaContextError::DecodeFailed(1))?
+                    .ok_or(LlamaContextError::EmbeddingsFailed(
+                        "Could not parse embeddings".to_string(),
+                    ))?
             };
 
-            // normalize the embedding
-            let mut embed_vec = vec![0f32; self.embedding_length];
-            let sum = embedding
-                .iter()
-                .map(move |x| x * x)
-                .reduce(move |a, b| a + b)
-                .ok_or(LlamaContextError::DecodeFailed(2))?;
-
-            let norm = sum.sqrt();
-            for (i, value) in embedding.iter().enumerate() {
-                embed_vec[i] = value / norm;
-            }
-
-            out.push(embed_vec)
+            out.push(self.normalise_embedding(embedding)?)
         }
 
         Ok(out)
+    }
+
+    /// Normalise an embeddings vector.
+    fn normalise_embedding(&self, embedding: &[f32]) -> Result<Vec<f32>, LlamaContextError> {
+        let mut embed_vec = vec![0f32; self.embedding_length];
+        let sum = embedding
+            .iter()
+            .map(move |x| x * x)
+            .reduce(move |a, b| a + b)
+            .ok_or(LlamaContextError::EmbeddingsFailed(
+                "Could not normalise vector".to_string(),
+            ))?;
+
+        let norm = sum.sqrt();
+        for (i, value) in embedding.iter().enumerate() {
+            embed_vec[i] = value / norm;
+        }
+
+        Ok(embed_vec)
     }
 
     /// Runs embeddings inference for the given inputs vector, returning the result.
@@ -490,7 +498,12 @@ impl LlamaModel {
             }
         }
 
-        let batch_capacity = min(self.training_size, total_tokens);
+        let batch_capacity = if max_tokens > self.training_size {
+            warn!("Large embedding input requires a context larger than the model's training context.");
+            max_tokens
+        } else {
+            min(self.training_size, total_tokens)
+        };
         let mut batch = Batch::new(batch_capacity, 0, inputs.len());
         let mut out = Vec::with_capacity(inputs.len());
 
@@ -500,6 +513,8 @@ impl LlamaModel {
             ctx_params.embedding = true;
             ctx_params.n_threads = params.n_threads;
             ctx_params.n_threads_batch = params.n_threads_batch;
+            ctx_params.n_ctx = batch_capacity as u32;
+            ctx_params.n_batch = batch_capacity as u32;
             // SAFETY: due to `_model` being declared in the `LlamaContext`, `self` must live
             // for at least the lifetime of `LlamaContext`.
             llama_new_context_with_model(**self.model, ctx_params)
@@ -512,11 +527,13 @@ impl LlamaModel {
         let mut batch_input_count = 0;
         for input in inputs {
             if batch.tokens() + input.len() > batch_capacity {
+                trace!("Decoding {} embedding tokens", batch.tokens());
                 out.append(&mut self.embeddings_decode(context, &batch, batch_input_count)?);
                 batch.clear();
                 batch_input_count = 0;
             }
 
+            trace!("Adding {} tokens to batch", input.len());
             for (i, token) in input.iter().enumerate() {
                 batch.add(*token, i, &[batch_input_count as i32], false);
             }
@@ -524,6 +541,7 @@ impl LlamaModel {
         }
 
         if 0 < batch_input_count {
+            trace!("Decoding remaining {} embedding tokens", batch.tokens());
             out.append(&mut self.embeddings_decode(context, &batch, batch_input_count)?);
         }
 

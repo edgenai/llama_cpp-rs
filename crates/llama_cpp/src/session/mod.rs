@@ -110,6 +110,10 @@ pub enum LlamaContextError {
     /// An error occurred on the other side of the FFI boundary; check your logs.
     #[error("advancing context failed (error code {0})")]
     DecodeFailed(i32),
+
+    /// An error occurred on the other side of the FFI boundary; check your logs.
+    #[error("failed to process embeddings (reason: {0})")]
+    EmbeddingsFailed(String),
 }
 
 impl LlamaSession {
