@@ -34,3 +34,4 @@ jobs:
         run: mkdir /tmp/models && cargo test --verbose
         env:
           LLAMA_CPP_TEST_MODELS: "/tmp/models"
+          LLAMA_EMBED_MODELS_DIR: "/tmp/models"
