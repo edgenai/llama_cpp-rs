@@ -1,15 +1,24 @@
 use std::ptr::addr_of_mut;
 
 use llama_cpp_sys::{
-    llama_context, llama_sample_min_p, llama_sample_repetition_penalties, llama_sample_tail_free,
-    llama_sample_temp, llama_sample_token, llama_sample_token_greedy, llama_sample_token_mirostat,
-    llama_sample_token_mirostat_v2, llama_sample_top_k, llama_sample_top_p, llama_sample_typical,
-    llama_token, llama_token_data_array,
+    llama_context, llama_sample_entropy, llama_sample_min_p, llama_sample_repetition_penalties,
+    llama_sample_tail_free, llama_sample_temp, llama_sample_token, llama_sample_token_greedy,
+    llama_sample_token_mirostat, llama_sample_token_mirostat_v2, llama_sample_top_k,
+    llama_sample_top_p, llama_sample_typical, llama_token, llama_token_data_array,
 };
 
 use crate::{Sampler, Token};
 
-/// Functions which change how a [`SoftmaxSampler`] selects its next token.
+/// Functions which modify the probability distribution output by the model.
+///
+/// Standard ordering for samplers (taken from [kobold.cpp](https://github.com/LostRuins/koboldcpp)):
+///
+/// 1. [`SamplerStage::RepetitionPenalty`]
+/// 2. [`SamplerStage::Temperature`], [SamplerStage::DynamicTemperature]
+/// 3. [`SamplerStage::TopK`]
+/// 4. [`SamplerStage::TailFree`]
+/// 5. [`SamplerStage::Typical`]
+/// 6. [`SamplerStage::TopP`], [`SamplerStage::MinP`]
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum SamplerStage {
@@ -17,24 +26,49 @@ pub enum SamplerStage {
     /// deterministic output, and higher values yield a more random/creative output.
     Temperature(f32),
 
-    /// Penalizes generating a tokens that is within the `last_n` tokens in various ways.
+    /// Divide the logits by a dynamically determined value between `min_temp`
+    /// and `max_temp`. `min_temp` and `max_temp` should from 0 to 2.
+    ///
+    /// This is determined by the equation:
+    ///
+    /// ```
+    /// (current_entropy / maximum_entropy) ^ exponent_val
+    /// ```
+    ///
+    /// where `current_entropy` is the entropy of the current
+    /// distribution over tokens, `maximum_entropy` is the maximum possible
+    /// entropy over that distribution, and `exponent_val` is the parameter below.
+    ///
+    /// See: <https://arxiv.org/pdf/2309.02772.pdf>
+    DynamicTemperature {
+        /// Determines the minimum possible temperature for this stage.
+        min_temp: f32,
+
+        /// Determines the maximum possible temperature for this stage.
+        max_temp: f32,
+
+        /// The `exponent_val` parameter.
+        exponent_val: f32,
+    },
+
+    /// Penalizes generating a token that is within the `last_n` tokens of context in various ways.
     RepetitionPenalty {
         /// Divide the token's logit by this value if they appear one or more time in the `last_n`
         /// tokens. 1.0 disables this, and values from 1.0-1.2 work well.
         ///
-        /// See page 5 of https://arxiv.org/pdf/1909.05858.pdf
+        /// See page 5 of <https://arxiv.org/pdf/1909.05858.pdf>
         repetition_penalty: f32,
 
         /// Subtract this value from the token's logit for each time the token appears in the
         /// `last_n` tokens. 0.0 disables this, and 0.0-1.0 are reasonable values.
         ///
-        /// See: https://platform.openai.com/docs/guides/text-generation/parameter-details
+        /// See: <https://platform.openai.com/docs/guides/text-generation/parameter-details>
         frequency_penalty: f32,
 
         /// Subtract this value from the token's logit if the token appears in the `last_n` tokens.
         /// 0.0 disables this, and 0.0-1.0 are reasonable values.
         ///
-        /// See: https://platform.openai.com/docs/guides/text-generation/parameter-details
+        /// See: <https://platform.openai.com/docs/guides/text-generation/parameter-details>
         presence_penalty: f32,
 
         /// How many tokens back to look when determining penalties. -1 means context size, and 0
@@ -44,28 +78,28 @@ pub enum SamplerStage {
 
     /// Keep the most likely tokens until their total probability exceeds `p`.
     ///
-    /// See: https://arxiv.org/abs/1904.09751
+    /// See: <https://arxiv.org/abs/1904.09751>
     TopP(f32),
 
     /// Remove tokens with probability less than `p` times the probability of the most likely
     /// token.
     ///
-    /// See: https://github.com/ggerganov/llama.cpp/pull/3841
+    /// See: <https://github.com/ggerganov/llama.cpp/pull/3841>
     MinP(f32),
 
     /// Keep the `k` tokens with the highest probability.
     ///
-    /// See: https://arxiv.org/abs/1904.09751
+    /// See: <https://arxiv.org/abs/1904.09751>
     TopK(i32),
 
     /// Typical Sampling
     ///
-    /// See: https://arxiv.org/abs/2202.00666
+    /// See: <https://arxiv.org/abs/2202.00666>
     Typical(f32),
 
     /// Tail Free Sampling
     ///
-    /// See: https://www.trentonbricken.com/Tail-Free-Sampling/
+    /// See: <https://www.trentonbricken.com/Tail-Free-Sampling/>
     TailFree(f32),
 }
 
@@ -83,11 +117,12 @@ enum TokenSelector {
     /// Selects a token using [Mirostat](https://arxiv.org/pdf/2007.14966.pdf)
     Mirostat { tau: f32, eta: f32, m: i32, mu: f32 },
 
-    /// Selects a token using [Mirostat V2](https://arxiv.org/abs/2007.14966.pdf)
+    /// Selects a token using [Mirostat V2](https://arxiv.org/pdf/2007.14966.pdf)
     MirostatV2 { tau: f32, eta: f32, mu: f32 },
 }
 
-/// Selects a token with a [`TokenSelector`] after applying multiple [`SamplerStage`]'s to it.
+/// Selects a token after applying multiple [`SamplerStage`]'s to the
+/// probability distribution output by the model.
 #[derive(Clone, Debug)]
 pub struct StandardSampler {
     stages: Vec<SamplerStage>,
@@ -96,9 +131,12 @@ pub struct StandardSampler {
 }
 
 impl StandardSampler {
-    /// Creates a new [`StandardSampler`] that selects a token at random based
-    /// on the distribution from the model after the [`SamplerStage`]'s are
-    /// applied.
+    /// Creates a new [`StandardSampler`] that modifies the model's raw
+    /// distribution using multiple [`SamplerStage`]'s, then selects a random
+    /// token from that distrubution.
+    ///
+    /// Ensures that at least `min_keep` tokens remain after the
+    /// [`SamplerStage`]'s are applied.
     pub fn new_softmax(stages: Vec<SamplerStage>, min_keep: usize) -> StandardSampler {
         StandardSampler {
             stages,
@@ -221,6 +259,13 @@ impl Sampler for StandardSampler {
                         } else {
                             llama_sample_temp(context, p_ptr, *temp);
                         }
+                    }
+                    SamplerStage::DynamicTemperature {
+                        min_temp,
+                        max_temp,
+                        exponent_val,
+                    } => {
+                        llama_sample_entropy(context, p_ptr, *min_temp, *max_temp, *exponent_val);
                     }
                     SamplerStage::TopP(top_p) => {
                         llama_sample_top_p(context, p_ptr, *top_p, min_keep);
