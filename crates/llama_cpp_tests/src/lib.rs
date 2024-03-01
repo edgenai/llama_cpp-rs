@@ -14,7 +14,9 @@ mod tests {
     use tokio::time::Instant;
 
     use llama_cpp::standard_sampler::StandardSampler;
-    use llama_cpp::{CompletionHandle, LlamaModel, LlamaParams, SessionParams, TokensToStrings};
+    use llama_cpp::{
+        CompletionHandle, EmbeddingsParams, LlamaModel, LlamaParams, SessionParams, TokensToStrings,
+    };
 
     async fn list_models() -> Vec<String> {
         let dir = std::env::var("LLAMA_CPP_TEST_MODELS").unwrap_or_else(|_| {
@@ -123,5 +125,40 @@ mod tests {
             println!();
             println!();
         }
+    }
+
+    #[tokio::test]
+    async fn embed() {
+        let params = LlamaParams::default();
+        let model = LlamaModel::load_from_file_async(
+            "/home/pedro/dev/models/embed/nomic-embed-text-v1.5.f16.gguf",
+            params,
+        )
+        .await
+        .expect("Failed to load model");
+
+        let mut input = vec![];
+
+        for _phrase_idx in 0..2 {
+            let mut phrase = String::new();
+            for _word_idx in 0..3000 {
+                phrase.push_str("word ");
+            }
+            phrase.truncate(phrase.len() - 1);
+            input.push(phrase);
+        }
+
+        let params = EmbeddingsParams::default();
+        let res = model
+            .embeddings_async(&input, params)
+            .await
+            .expect("Failed to infer embeddings");
+
+        for embedding in &res {
+            assert!(embedding[0].is_normal(), "Embedding value isn't normal");
+            assert!(embedding[0] >= 0f32, "Embedding value isn't normalised");
+            assert!(embedding[0] <= 1f32, "Embedding value isn't normalised");
+        }
+        println!("{:?}", res[0]);
     }
 }
