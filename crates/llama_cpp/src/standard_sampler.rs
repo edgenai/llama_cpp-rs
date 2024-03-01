@@ -69,12 +69,21 @@ pub enum SamplerStage {
     TailFree(f32),
 }
 
+/// Determines how the next token is selected from the distribution produced by
+/// the model and the [`SamplerStage`]'s.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 enum TokenSelector {
+    /// Selects a token at random, weighted by the distribution
     Softmax,
+
+    /// Always selects the most likely token.
     Greedy,
+
+    /// Selects a token using [Mirostat](https://arxiv.org/pdf/2007.14966.pdf)
     Mirostat { tau: f32, eta: f32, m: i32, mu: f32 },
+
+    /// Selects a token using [Mirostat V2](https://arxiv.org/abs/2007.14966.pdf)
     MirostatV2 { tau: f32, eta: f32, mu: f32 },
 }
 
@@ -87,6 +96,9 @@ pub struct StandardSampler {
 }
 
 impl StandardSampler {
+    /// Creates a new [`StandardSampler`] that selects a token at random based
+    /// on the distribution from the model after the [`SamplerStage`]'s are
+    /// applied.
     pub fn new_softmax(stages: Vec<SamplerStage>, min_keep: usize) -> StandardSampler {
         StandardSampler {
             stages,
@@ -95,6 +107,8 @@ impl StandardSampler {
         }
     }
 
+    /// Creates a new [`StandardSampler`] that always selects the next most
+    /// token produced by the model.
     pub fn new_greedy() -> StandardSampler {
         StandardSampler {
             stages: Vec::new(),
@@ -103,6 +117,8 @@ impl StandardSampler {
         }
     }
 
+    /// Creates a new [`StandardSampler`] that selects a token using
+    /// [Mirostat](https://arxiv.org/pdf/2007.14966.pdf).
     pub fn new_mirostat(
         stages: Vec<SamplerStage>,
         min_keep: usize,
@@ -122,6 +138,8 @@ impl StandardSampler {
         }
     }
 
+    /// Creates a new [`StandardSampler`] that selects a token using
+    /// [Mirostat V2](https://arxiv.org/pdf/2007.14966.pdf).
     pub fn new_mirostat_v2(
         stages: Vec<SamplerStage>,
         min_keep: usize,
