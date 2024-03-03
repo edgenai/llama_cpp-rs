@@ -142,7 +142,7 @@ impl SamplerStage {
                         *repetition_penalty,
                         *frequency_penalty,
                         *presence_penalty,
-                        );
+                    );
                 }
                 SamplerStage::Temperature(temp) => {
                     if *temp == 0.0 {
