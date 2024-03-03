@@ -105,6 +105,81 @@ pub enum SamplerStage {
     TailFree(f32),
 }
 
+impl SamplerStage {
+    /// Applies this [`SamplerStage`] to the provided token data array.
+    ///
+    /// Ensures that at least `min_keep` tokens remain after the
+    /// [`SamplerStage`]'s are applied.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub fn apply(
+        &self,
+        context: *mut llama_context,
+        tokens: &[Token],
+        mut candidates_p: llama_token_data_array,
+        min_keep: usize,
+    ) -> llama_token_data_array {
+        let p_ptr = addr_of_mut!(candidates_p);
+
+        unsafe {
+            match self {
+                SamplerStage::RepetitionPenalty {
+                    repetition_penalty,
+                    frequency_penalty,
+                    presence_penalty,
+                    last_n,
+                } => {
+                    let last_n = if *last_n < 0 {
+                        tokens.len()
+                    } else {
+                        tokens.len().min(*last_n as usize)
+                    };
+
+                    llama_sample_repetition_penalties(
+                        context,
+                        p_ptr,
+                        tokens[tokens.len() - last_n..].as_ptr() as *const llama_token,
+                        last_n,
+                        *repetition_penalty,
+                        *frequency_penalty,
+                        *presence_penalty,
+                        );
+                }
+                SamplerStage::Temperature(temp) => {
+                    if *temp == 0.0 {
+                        llama_sample_top_k(context, p_ptr, 1, 1);
+                    } else {
+                        llama_sample_temp(context, p_ptr, *temp);
+                    }
+                }
+                SamplerStage::DynamicTemperature {
+                    min_temp,
+                    max_temp,
+                    exponent_val,
+                } => {
+                    llama_sample_entropy(context, p_ptr, *min_temp, *max_temp, *exponent_val);
+                }
+                SamplerStage::TopP(top_p) => {
+                    llama_sample_top_p(context, p_ptr, *top_p, min_keep);
+                }
+                SamplerStage::MinP(min_p) => {
+                    llama_sample_min_p(context, p_ptr, *min_p, min_keep);
+                }
+                SamplerStage::TopK(top_k) => {
+                    llama_sample_top_k(context, p_ptr, *top_k, min_keep);
+                }
+                SamplerStage::Typical(p) => {
+                    llama_sample_typical(context, p_ptr, *p, min_keep);
+                }
+                SamplerStage::TailFree(z) => {
+                    llama_sample_tail_free(context, p_ptr, *z, min_keep);
+                }
+            }
+        }
+
+        candidates_p
+    }
+}
+
 /// Determines how the next token is selected from the distribution produced by
 /// the model and the [`SamplerStage`]'s.
 #[derive(Clone, Debug)]
@@ -227,66 +302,14 @@ impl Sampler for StandardSampler {
         tokens: &[Token],
         mut candidates_p: llama_token_data_array,
     ) -> Token {
-        let p_ptr = addr_of_mut!(candidates_p);
         let min_keep = self.min_keep.max(1);
 
+        for stage in &self.stages {
+            candidates_p = stage.apply(context, tokens, candidates_p, min_keep);
+        }
+
         unsafe {
-            for stage in &self.stages {
-                match stage {
-                    SamplerStage::RepetitionPenalty {
-                        repetition_penalty,
-                        frequency_penalty,
-                        presence_penalty,
-                        last_n,
-                    } => {
-                        let last_n = if *last_n < 0 {
-                            tokens.len()
-                        } else {
-                            tokens.len().min(*last_n as usize)
-                        };
-
-                        llama_sample_repetition_penalties(
-                            context,
-                            p_ptr,
-                            tokens[tokens.len() - last_n..].as_ptr() as *const llama_token,
-                            last_n,
-                            *repetition_penalty,
-                            *frequency_penalty,
-                            *presence_penalty,
-                        );
-                    }
-                    SamplerStage::Temperature(temp) => {
-                        if *temp == 0.0 {
-                            llama_sample_top_k(context, p_ptr, 1, 1);
-                        } else {
-                            llama_sample_temp(context, p_ptr, *temp);
-                        }
-                    }
-                    SamplerStage::DynamicTemperature {
-                        min_temp,
-                        max_temp,
-                        exponent_val,
-                    } => {
-                        llama_sample_entropy(context, p_ptr, *min_temp, *max_temp, *exponent_val);
-                    }
-                    SamplerStage::TopP(top_p) => {
-                        llama_sample_top_p(context, p_ptr, *top_p, min_keep);
-                    }
-                    SamplerStage::MinP(min_p) => {
-                        llama_sample_min_p(context, p_ptr, *min_p, min_keep);
-                    }
-                    SamplerStage::TopK(top_k) => {
-                        llama_sample_top_k(context, p_ptr, *top_k, min_keep);
-                    }
-                    SamplerStage::Typical(p) => {
-                        llama_sample_typical(context, p_ptr, *p, min_keep);
-                    }
-                    SamplerStage::TailFree(z) => {
-                        llama_sample_tail_free(context, p_ptr, *z, min_keep);
-                    }
-                }
-            }
-
+            let p_ptr = addr_of_mut!(candidates_p);
             let id = match &mut self.token_selector {
                 TokenSelector::Softmax => llama_sample_token(context, p_ptr),
                 TokenSelector::Greedy => llama_sample_token_greedy(context, p_ptr),
