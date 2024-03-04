@@ -112,8 +112,17 @@ pub struct Token(pub i32);
 #[error("an internal assertion failed in llama.cpp; check `tracing` output.")]
 pub struct LlamaInternalError;
 
-/// This needs to be documented!
+/// Something which selects a [`Token`] from the distribution output by a
+/// [`LlamaModel`].
 pub trait Sampler {
-    /// This needs to be documented!
-    fn sample(&self, context: *mut llama_context, candidates_p: llama_token_data_array) -> Token;
+    /// Given a [`llama_context`], the tokens in context (to allow for
+    /// repetition penalities), and a [`llama_token_data_array`] (which contains
+    /// the distribution over the next token as output by the model), selects a
+    /// token.
+    fn sample(
+        &mut self,
+        context: *mut llama_context,
+        tokens: &[Token],
+        candidates_p: llama_token_data_array,
+    ) -> Token;
 }

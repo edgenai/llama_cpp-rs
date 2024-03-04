@@ -268,7 +268,7 @@ impl LlamaSession {
     /// Start completion.
     pub fn start_completing_with<S>(
         &mut self,
-        sampler: S,
+        mut sampler: S,
         max_predictions: usize,
     ) -> CompletionHandle
     where
@@ -284,6 +284,7 @@ impl LlamaSession {
             let context = block_on(session.inner.ctx.lock());
             let vocab = session.model().vocabulary_size();
             let end_of_stream = session.model().eos();
+            let mut token_buf = block_on(session.inner.tokens.write());
             let mut count = 0;
             let mut batch = Batch::new(1, 0, 1);
             let mut i = session.inner.last_batch_size.load(Ordering::SeqCst);
@@ -311,7 +312,7 @@ impl LlamaSession {
                     sorted: false,
                 };
 
-                let token = sampler.sample(context.ptr, candidates_p);
+                let token = sampler.sample(context.ptr, &token_buf, candidates_p);
 
                 match tx.send(token) {
                     Ok(_) => (),
@@ -341,7 +342,6 @@ impl LlamaSession {
                 i = batch.tokens();
 
                 session.inner.last_batch_size.store(i, Ordering::SeqCst);
-                let mut token_buf = block_on(session.inner.tokens.write());
                 current_pos = token_buf.len();
                 token_buf.push(token);
             }
