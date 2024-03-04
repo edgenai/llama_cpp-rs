@@ -1,8 +1,49 @@
 //! Implements [`SessionParams`], which configures a [`crate::LlamaSession`]
 
-use std::ptr;
+use std::ptr::null_mut;
 
-use llama_cpp_sys::{ggml_type, llama_context_default_params, llama_context_params};
+use llama_cpp_sys::{
+    ggml_type, llama_context_default_params, llama_context_params, llama_pooling_type,
+    llama_pooling_type_LLAMA_POOLING_TYPE_CLS, llama_pooling_type_LLAMA_POOLING_TYPE_MEAN,
+    llama_pooling_type_LLAMA_POOLING_TYPE_NONE, llama_pooling_type_LLAMA_POOLING_TYPE_UNSPECIFIED,
+};
+
+/// whether to pool (sum) embedding results by sequence id (ignored if no pooling layer)
+#[derive(Clone, Copy, Debug)]
+pub enum PoolingType {
+    /// Unspecified.
+    Unspecified,
+    /// Don't pool.
+    None,
+    /// TODO lookup what this does
+    Mean,
+    /// TODO lookup what this does
+    Cls,
+}
+
+impl From<PoolingType> for llama_pooling_type {
+    fn from(value: PoolingType) -> Self {
+        match value {
+            PoolingType::Unspecified => llama_pooling_type_LLAMA_POOLING_TYPE_UNSPECIFIED,
+            PoolingType::None => llama_pooling_type_LLAMA_POOLING_TYPE_NONE,
+            PoolingType::Mean => llama_pooling_type_LLAMA_POOLING_TYPE_MEAN,
+            PoolingType::Cls => llama_pooling_type_LLAMA_POOLING_TYPE_CLS,
+        }
+    }
+}
+
+impl From<llama_pooling_type> for PoolingType {
+    fn from(value: llama_pooling_type) -> Self {
+        #![allow(non_upper_case_globals)]
+        match value {
+            llama_pooling_type_LLAMA_POOLING_TYPE_UNSPECIFIED => PoolingType::Unspecified,
+            llama_pooling_type_LLAMA_POOLING_TYPE_NONE => PoolingType::None,
+            llama_pooling_type_LLAMA_POOLING_TYPE_MEAN => PoolingType::Mean,
+            llama_pooling_type_LLAMA_POOLING_TYPE_CLS => PoolingType::Cls,
+            _ => unimplemented!(),
+        }
+    }
+}
 
 /// Session-specific parameters.
 #[derive(Clone)]
@@ -61,7 +102,10 @@ pub struct SessionParams {
     pub offload_kqv: bool,
 
     /// whether to pool (sum) embedding results by sequence id (ignored if no pooling layer)
-    pub pooling: bool,
+    pub pooling: PoolingType,
+
+    /// defragment the KV cache if holes/size > thold, < 0 disabled (default)
+    defrag_threshold: f32,
 }
 
 impl Default for SessionParams {
@@ -91,7 +135,8 @@ impl Default for SessionParams {
             type_v: c_defaults.type_v as u32,
             embedding: c_defaults.embedding,
             offload_kqv: c_defaults.offload_kqv,
-            pooling: c_defaults.do_pooling,
+            pooling: c_defaults.pooling_type.into(),
+            defrag_threshold: c_defaults.defrag_thold,
         }
     }
 }
@@ -112,15 +157,17 @@ impl From<SessionParams> for llama_context_params {
             yarn_beta_fast: value.yarn_beta_fast,
             yarn_beta_slow: value.yarn_beta_slow,
             yarn_orig_ctx: value.yarn_orig_ctx,
+            defrag_thold: value.defrag_threshold,
             cb_eval: None,
-            cb_eval_user_data: ptr::null_mut(),
+            cb_eval_user_data: null_mut(),
             type_k: value.type_k as ggml_type,
             type_v: value.type_v as ggml_type,
-            mul_mat_q: true,   // Deprecated
             logits_all: false, // Deprecated
             embedding: value.embedding,
             offload_kqv: value.offload_kqv,
-            do_pooling: value.pooling,
+            pooling_type: value.pooling.into(),
+            abort_callback: None,
+            abort_callback_data: null_mut(),
         }
     }
 }

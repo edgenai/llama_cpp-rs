@@ -4,8 +4,8 @@ use std::ptr;
 
 use llama_cpp_sys::{
     llama_model_default_params, llama_model_params, llama_split_mode,
-    llama_split_mode_LLAMA_SPLIT_LAYER, llama_split_mode_LLAMA_SPLIT_NONE,
-    llama_split_mode_LLAMA_SPLIT_ROW,
+    llama_split_mode_LLAMA_SPLIT_MODE_LAYER, llama_split_mode_LLAMA_SPLIT_MODE_NONE,
+    llama_split_mode_LLAMA_SPLIT_MODE_ROW,
 };
 
 /// Parameters for llama.
@@ -65,9 +65,9 @@ pub enum SplitMode {
 impl From<SplitMode> for llama_split_mode {
     fn from(value: SplitMode) -> Self {
         match value {
-            SplitMode::None => llama_split_mode_LLAMA_SPLIT_NONE,
-            SplitMode::Layer => llama_split_mode_LLAMA_SPLIT_LAYER,
-            SplitMode::Row => llama_split_mode_LLAMA_SPLIT_ROW,
+            SplitMode::None => llama_split_mode_LLAMA_SPLIT_MODE_NONE,
+            SplitMode::Layer => llama_split_mode_LLAMA_SPLIT_MODE_LAYER,
+            SplitMode::Row => llama_split_mode_LLAMA_SPLIT_MODE_ROW,
         }
     }
 }
@@ -76,9 +76,9 @@ impl From<llama_split_mode> for SplitMode {
     fn from(value: llama_split_mode) -> Self {
         #![allow(non_upper_case_globals)]
         match value {
-            llama_split_mode_LLAMA_SPLIT_NONE => SplitMode::None,
-            llama_split_mode_LLAMA_SPLIT_LAYER => SplitMode::Layer,
-            llama_split_mode_LLAMA_SPLIT_ROW => SplitMode::Row,
+            llama_split_mode_LLAMA_SPLIT_MODE_NONE => SplitMode::None,
+            llama_split_mode_LLAMA_SPLIT_MODE_LAYER => SplitMode::Layer,
+            llama_split_mode_LLAMA_SPLIT_MODE_ROW => SplitMode::Row,
             _ => unimplemented!(),
         }
     }

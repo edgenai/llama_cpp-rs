@@ -198,6 +198,34 @@ enum TokenSelector {
     MirostatV2 { tau: f32, eta: f32, mu: f32 },
 }
 
+impl TokenSelector {
+    /// Select and and return a token from a given distribution.
+    ///
+    /// Note: while this function may take a mutable reference to `self`, the internal state *shouldn't* be altered.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub fn select(
+        &mut self,
+        context: *mut llama_context,
+        mut candidates_p: llama_token_data_array,
+    ) -> Token {
+        unsafe {
+            let p_ptr = addr_of_mut!(candidates_p);
+            let id = match self {
+                TokenSelector::Softmax => llama_sample_token(context, p_ptr),
+                TokenSelector::Greedy => llama_sample_token_greedy(context, p_ptr),
+                TokenSelector::Mirostat { tau, eta, m, mu } => {
+                    llama_sample_token_mirostat(context, p_ptr, *tau, *eta, *m, addr_of_mut!(*mu))
+                }
+                TokenSelector::MirostatV2 { tau, eta, mu } => {
+                    llama_sample_token_mirostat_v2(context, p_ptr, *tau, *eta, addr_of_mut!(*mu))
+                }
+            };
+
+            Token(id)
+        }
+    }
+}
+
 /// Selects a token after applying multiple [`SamplerStage`]'s to the
 /// probability distribution output by the model.
 #[derive(Clone, Debug)]
@@ -308,20 +336,6 @@ impl Sampler for StandardSampler {
             candidates_p = stage.apply(context, tokens, candidates_p, min_keep);
         }
 
-        unsafe {
-            let p_ptr = addr_of_mut!(candidates_p);
-            let id = match &mut self.token_selector {
-                TokenSelector::Softmax => llama_sample_token(context, p_ptr),
-                TokenSelector::Greedy => llama_sample_token_greedy(context, p_ptr),
-                TokenSelector::Mirostat { tau, eta, m, mu } => {
-                    llama_sample_token_mirostat(context, p_ptr, *tau, *eta, *m, addr_of_mut!(*mu))
-                }
-                TokenSelector::MirostatV2 { tau, eta, mu } => {
-                    llama_sample_token_mirostat_v2(context, p_ptr, *tau, *eta, addr_of_mut!(*mu))
-                }
-            };
-
-            Token(id)
-        }
+        self.token_selector.select(context, candidates_p)
     }
 }
