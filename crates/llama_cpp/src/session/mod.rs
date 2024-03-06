@@ -2,6 +2,7 @@
 
 use std::cmp::min;
 use std::ffi::c_void;
+use std::ops::{Bound, RangeBounds};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -373,24 +374,33 @@ impl LlamaSession {
         block_on(self.inner.tokens.read()).clone()
     }
 
-    /// Removes all but the first `n_tokens` tokens from the context
-    pub fn truncate_context(&self, n_tokens: usize) {
-        if n_tokens > self.context_size() {
-            return;
-        }
+    /// Removes all tokens within the given range without performing any prompt
+    /// processing. If you remove tokens in the middle of context, it is recommended that you keep
+    /// the first ~4 tokens of context when you do this, per <https://arxiv.org/abs/2309.17453>.
+    pub fn remove_tokens_in_range(&mut self, range: impl RangeBounds<usize>) {
+        let start_bound = match range.start_bound() {
+            Bound::Included(i) => *i as i32,
+            Bound::Excluded(i) => *i as i32 + 1,
+            Bound::Unbounded => -1,
+        };
+
+        let end_bound = match range.end_bound() {
+            Bound::Included(i) => *i as i32 + 1,
+            Bound::Excluded(i) => *i as i32,
+            Bound::Unbounded => -1,
+        };
 
         let context = block_on(self.inner.ctx.lock());
 
-        unsafe {
-            llama_kv_cache_seq_rm(
-                context.ptr,
-                -1,              // Match all sequences
-                n_tokens as i32, // Delete starting at n_tokens
-                -1,              // Delete ending at end of context
-            )
-        }
+        // -1 here to match all sequences
+        unsafe { llama_kv_cache_seq_rm(context.ptr, -1, start_bound, end_bound) }
 
-        block_on(self.inner.tokens.write()).truncate(n_tokens)
+        block_on(self.inner.tokens.write()).drain(range);
+    }
+
+    /// Removes all but the first `n_tokens` tokens from the context.
+    pub fn truncate_context(&mut self, n_tokens: usize) {
+        self.remove_tokens_in_range(n_tokens..)
     }
 
     /// Sets this session's context to the tokens provided.
