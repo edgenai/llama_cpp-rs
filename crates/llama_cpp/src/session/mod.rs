@@ -377,6 +377,9 @@ impl LlamaSession {
     /// Removes all tokens within the given range without performing any prompt
     /// processing. If you remove tokens in the middle of context, it is recommended that you keep
     /// the first ~4 tokens of context when you do this, per <https://arxiv.org/abs/2309.17453>.
+    ///
+    /// Note that calling this is not equivalent to calling [`LlamaSession::set_context`] with the
+    /// same list of tokens that this method produces.
     pub fn remove_tokens_in_range(&mut self, range: impl RangeBounds<usize>) {
         let start_bound = match range.start_bound() {
             Bound::Included(i) => *i as i32,
