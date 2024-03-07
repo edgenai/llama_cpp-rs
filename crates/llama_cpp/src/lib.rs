@@ -77,6 +77,7 @@
 
 #![warn(missing_docs)]
 
+use grammar::LlamaGrammar;
 use llama_cpp_sys::{llama_context, llama_token_data_array};
 use thiserror::Error;
 
@@ -88,6 +89,7 @@ mod session;
 pub use model::*;
 pub use session::*;
 
+pub mod grammar;
 /// The standard sampler implementation.
 pub mod standard_sampler;
 

@@ -1,13 +1,10 @@
 use std::ptr::addr_of_mut;
 
 use llama_cpp_sys::{
-    llama_context, llama_sample_entropy, llama_sample_min_p, llama_sample_repetition_penalties,
-    llama_sample_tail_free, llama_sample_temp, llama_sample_token, llama_sample_token_greedy,
-    llama_sample_token_mirostat, llama_sample_token_mirostat_v2, llama_sample_top_k,
-    llama_sample_top_p, llama_sample_typical, llama_token, llama_token_data_array,
+    llama_context, llama_sample_entropy, llama_sample_grammar, llama_grammar_accept_token, llama_sample_min_p, llama_sample_repetition_penalties, llama_sample_tail_free, llama_sample_temp, llama_sample_token, llama_sample_token_greedy, llama_sample_token_mirostat, llama_sample_token_mirostat_v2, llama_sample_top_k, llama_sample_top_p, llama_sample_typical, llama_token, llama_token_data_array
 };
 
-use crate::{Sampler, Token};
+use crate::{grammar::LlamaGrammar, Sampler, Token};
 
 /// Functions which modify the probability distribution output by the model.
 ///
@@ -19,7 +16,7 @@ use crate::{Sampler, Token};
 /// 4. [`SamplerStage::TailFree`]
 /// 5. [`SamplerStage::Typical`]
 /// 6. [`SamplerStage::TopP`], [`SamplerStage::MinP`]
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum SamplerStage {
     /// Divide the logits by this value. Ranges from 0 to 2. Lower values yield a more
@@ -52,7 +49,6 @@ pub enum SamplerStage {
         /// temperature to approach `max_temp` more quickly at small entropies.
         exponent_val: f32,
     },
-
     /// Penalizes generating a token that is within the `last_n` tokens of context in various ways.
     RepetitionPenalty {
         /// Divide the token's logit by this value if they appear one or more time in the `last_n`
@@ -228,10 +224,11 @@ impl TokenSelector {
 
 /// Selects a token after applying multiple [`SamplerStage`]'s to the
 /// probability distribution output by the model.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct StandardSampler {
     stages: Vec<SamplerStage>,
     min_keep: usize,
+    grammar: Option<LlamaGrammar>,
     token_selector: TokenSelector,
 }
 
@@ -242,10 +239,15 @@ impl StandardSampler {
     ///
     /// Ensures that at least `min_keep` tokens remain after the
     /// [`SamplerStage`]'s are applied.
-    pub fn new_softmax(stages: Vec<SamplerStage>, min_keep: usize) -> StandardSampler {
+    pub fn new_softmax(
+        stages: Vec<SamplerStage>,
+        min_keep: usize,
+        grammar: Option<LlamaGrammar>,
+    ) -> StandardSampler {
         StandardSampler {
             stages,
             min_keep,
+            grammar: grammar,
             token_selector: TokenSelector::Softmax,
         }
     }
@@ -256,6 +258,7 @@ impl StandardSampler {
         StandardSampler {
             stages: Vec::new(),
             min_keep: 0,
+            grammar: None,
             token_selector: TokenSelector::Greedy,
         }
     }
@@ -272,6 +275,7 @@ impl StandardSampler {
         StandardSampler {
             stages,
             min_keep,
+            grammar: None,
             token_selector: TokenSelector::Mirostat {
                 tau,
                 eta,
@@ -292,6 +296,7 @@ impl StandardSampler {
         StandardSampler {
             stages,
             min_keep,
+            grammar: None,
             token_selector: TokenSelector::MirostatV2 {
                 tau,
                 eta,
@@ -316,6 +321,7 @@ impl Default for StandardSampler {
                 SamplerStage::MinP(0.05),
                 SamplerStage::Temperature(0.8),
             ],
+            grammar: None,
             min_keep: 1,
             token_selector: TokenSelector::Softmax,
         }
@@ -330,12 +336,25 @@ impl Sampler for StandardSampler {
         tokens: &[Token],
         mut candidates_p: llama_token_data_array,
     ) -> Token {
+        let p_ptr = addr_of_mut!(candidates_p);
         let min_keep = self.min_keep.max(1);
+
+        // Note: We should sample grammar before applying other sampling stages.
+        if let Some(grammar) = self.grammar.as_mut() {
+            unsafe { llama_sample_grammar(context, p_ptr, grammar.grammar.as_ptr()) };
+        }
 
         for stage in &self.stages {
             candidates_p = stage.apply(context, tokens, candidates_p, min_keep);
         }
 
-        self.token_selector.select(context, candidates_p)
+        let token = self.token_selector.select(context, candidates_p);
+
+        // Note: We must accept the token into the grammar after sampling if a grammar is provided.
+        if let Some(grammar) = self.grammar.as_mut() {
+            unsafe { llama_grammar_accept_token(context, grammar.grammar.as_ptr(), token.0)}
+        }
+
+        token
     }
 }
