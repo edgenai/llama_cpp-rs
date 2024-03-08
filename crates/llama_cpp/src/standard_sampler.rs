@@ -16,7 +16,7 @@ use crate::{grammar::LlamaGrammar, Sampler, Token};
 /// 4. [`SamplerStage::TailFree`]
 /// 5. [`SamplerStage::Typical`]
 /// 6. [`SamplerStage::TopP`], [`SamplerStage::MinP`]
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum SamplerStage {
     /// Divide the logits by this value. Ranges from 0 to 2. Lower values yield a more
@@ -224,7 +224,7 @@ impl TokenSelector {
 
 /// Selects a token after applying multiple [`SamplerStage`]'s to the
 /// probability distribution output by the model.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct StandardSampler {
     stages: Vec<SamplerStage>,
     min_keep: usize,
