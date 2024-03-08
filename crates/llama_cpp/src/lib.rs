@@ -77,7 +77,6 @@
 
 #![warn(missing_docs)]
 
-use grammar::LlamaGrammar;
 use llama_cpp_sys::{llama_context, llama_token_data_array};
 use thiserror::Error;
 
