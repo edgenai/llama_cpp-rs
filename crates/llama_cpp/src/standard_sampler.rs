@@ -1,7 +1,11 @@
 use std::ptr::addr_of_mut;
 
 use llama_cpp_sys::{
-    llama_context, llama_sample_entropy, llama_sample_grammar, llama_grammar_accept_token, llama_sample_min_p, llama_sample_repetition_penalties, llama_sample_tail_free, llama_sample_temp, llama_sample_token, llama_sample_token_greedy, llama_sample_token_mirostat, llama_sample_token_mirostat_v2, llama_sample_top_k, llama_sample_top_p, llama_sample_typical, llama_token, llama_token_data_array
+    llama_context, llama_grammar_accept_token, llama_sample_entropy, llama_sample_grammar,
+    llama_sample_min_p, llama_sample_repetition_penalties, llama_sample_tail_free,
+    llama_sample_temp, llama_sample_token, llama_sample_token_greedy, llama_sample_token_mirostat,
+    llama_sample_token_mirostat_v2, llama_sample_top_k, llama_sample_top_p, llama_sample_typical,
+    llama_token, llama_token_data_array,
 };
 
 use crate::{grammar::LlamaGrammar, Sampler, Token};
@@ -352,7 +356,7 @@ impl Sampler for StandardSampler {
 
         // Note: We must accept the token into the grammar after sampling if a grammar is provided.
         if let Some(grammar) = self.grammar.as_mut() {
-            unsafe { llama_grammar_accept_token(context, grammar.grammar.as_ptr(), token.0)}
+            unsafe { llama_grammar_accept_token(context, grammar.grammar.as_ptr(), token.0) }
         }
 
         token

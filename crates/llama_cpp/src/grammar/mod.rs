@@ -7,7 +7,10 @@ use std::collections::BTreeMap;
 use std::fmt::{Debug, Formatter};
 
 use llama_cpp_sys::{
-    llama_grammar, llama_grammar_element, llama_gretype, llama_gretype_LLAMA_GRETYPE_ALT, llama_gretype_LLAMA_GRETYPE_CHAR, llama_gretype_LLAMA_GRETYPE_CHAR_ALT, llama_gretype_LLAMA_GRETYPE_CHAR_NOT, llama_gretype_LLAMA_GRETYPE_CHAR_RNG_UPPER, llama_gretype_LLAMA_GRETYPE_END, llama_gretype_LLAMA_GRETYPE_RULE_REF
+    llama_grammar, llama_grammar_element, llama_gretype, llama_gretype_LLAMA_GRETYPE_ALT,
+    llama_gretype_LLAMA_GRETYPE_CHAR, llama_gretype_LLAMA_GRETYPE_CHAR_ALT,
+    llama_gretype_LLAMA_GRETYPE_CHAR_NOT, llama_gretype_LLAMA_GRETYPE_CHAR_RNG_UPPER,
+    llama_gretype_LLAMA_GRETYPE_END, llama_gretype_LLAMA_GRETYPE_RULE_REF,
 };
 use std::ptr::NonNull;
 use std::str::FromStr;
