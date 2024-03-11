@@ -121,7 +121,7 @@ impl SamplerStage {
     pub fn from_grammar(grammar: LlamaGrammar, start_position: Option<usize>) -> Self {
         SamplerStage::Grammar(GrammarStage {
             grammar,
-            accepted_to: start_position,
+            accepted_up_to: start_position,
         })
     }
 
@@ -193,7 +193,7 @@ impl SamplerStage {
                     llama_sample_tail_free(context, p_ptr, *z, min_keep);
                 }
                 SamplerStage::Grammar(stage) => {
-                    stage.apply(context, tokens, candidates_p, min_keep)
+                    candidates_p = stage.apply(context, tokens, candidates_p, min_keep)
                 }
             }
         }
@@ -206,7 +206,7 @@ impl SamplerStage {
 #[derive(Clone, Debug)]
 pub struct GrammarStage {
     grammar: LlamaGrammar,
-    accepted_to: Option<usize>,
+    accepted_up_to: Option<usize>,
 }
 
 impl GrammarStage {
@@ -216,15 +216,21 @@ impl GrammarStage {
         tokens: &[Token],
         mut candidates_p: llama_token_data_array,
         _min_keep: usize,
-    ) {
-        let accepted_to = self.accepted_to.unwrap_or(tokens.len());
-        for token in &tokens[accepted_to..] {
+    ) -> llama_token_data_array {
+        // If `accepted_up_to` is `None`, assume that we should start at the end of context.
+        let accepted_up_to = self.accepted_up_to.unwrap_or(tokens.len());
+
+        // Accept all new tokens until the end of context.
+        for token in &tokens[accepted_up_to..] {
             unsafe { llama_grammar_accept_token(context, self.grammar.grammar.as_ptr(), token.0) }
         }
-        self.accepted_to = Some(tokens.len());
+        self.accepted_up_to = Some(tokens.len());
 
+        // Apply grammar sampling to `candidates_p`.
         let p_ptr = addr_of_mut!(candidates_p);
         unsafe { llama_sample_grammar(context, p_ptr, self.grammar.grammar.as_ptr()) };
+
+        candidates_p
     }
 }
 
