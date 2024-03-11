@@ -14,12 +14,13 @@ use crate::{grammar::LlamaGrammar, Sampler, Token};
 ///
 /// Standard ordering for samplers (taken from [kobold.cpp](https://github.com/LostRuins/koboldcpp)):
 ///
-/// 1. [`SamplerStage::RepetitionPenalty`]
-/// 2. [`SamplerStage::Temperature`], [SamplerStage::DynamicTemperature]
-/// 3. [`SamplerStage::TopK`]
-/// 4. [`SamplerStage::TailFree`]
-/// 5. [`SamplerStage::Typical`]
-/// 6. [`SamplerStage::TopP`], [`SamplerStage::MinP`]
+/// 1. [`SamplerStage::Grammar`]
+/// 2. [`SamplerStage::RepetitionPenalty`]
+/// 3. [`SamplerStage::Temperature`], [SamplerStage::DynamicTemperature]
+/// 4. [`SamplerStage::TopK`]
+/// 5. [`SamplerStage::TailFree`]
+/// 6. [`SamplerStage::Typical`]
+/// 7. [`SamplerStage::TopP`], [`SamplerStage::MinP`]
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum SamplerStage {
