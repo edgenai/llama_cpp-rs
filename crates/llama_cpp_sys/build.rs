@@ -4,6 +4,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use bindgen::callbacks::{ItemInfo, ItemKind, ParseCallbacks};
 use cc::Build;
 use once_cell::sync::Lazy;
 
@@ -84,6 +85,9 @@ compile_error!("feature \"clblas\" cannot be enabled alongside other GPU based f
 ))]
 compile_error!("feature \"vulkan\" cannot be enabled alongside other GPU based features");
 
+/// The general prefix used to rename conflicting symbols.
+const PREFIX: &str = "llama_";
+
 static LLAMA_PATH: Lazy<PathBuf> = Lazy::new(|| PathBuf::from("./thirdparty/llama.cpp"));
 
 fn compile_bindings(out_path: &Path) {
@@ -91,18 +95,35 @@ fn compile_bindings(out_path: &Path) {
     let bindings = bindgen::Builder::default()
         .header(LLAMA_PATH.join("ggml.h").to_string_lossy())
         .header(LLAMA_PATH.join("llama.h").to_string_lossy())
+        .allowlist_function("ggml_.*")
         .allowlist_type("ggml_.*")
         .allowlist_function("llama_.*")
         .allowlist_type("llama_.*")
-        .parse_callbacks(Box::new(
-            bindgen::CargoCallbacks::new().rerun_on_header_files(false),
-        ))
+        .parse_callbacks(Box::new(GGMLLinkRename {}))
         .generate()
         .expect("Unable to generate bindings");
 
     bindings
         .write_to_file(out_path.join("bindings.rs"))
         .expect("Couldn't write bindings!");
+}
+
+#[derive(Debug)]
+struct GGMLLinkRename {}
+
+impl ParseCallbacks for GGMLLinkRename {
+    fn generated_link_name_override(&self, item_info: ItemInfo<'_>) -> Option<String> {
+        match item_info.kind {
+            ItemKind::Function => {
+                if item_info.name.starts_with("ggml_") {
+                    Some(format!("{PREFIX}{}", item_info.name))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
 }
 
 /// Add platform appropriate flags and definitions present in all compilation configurations.
@@ -598,7 +619,7 @@ mod compat {
                 },
             ],
         );
-        objcopy_redefine(&objcopy, ggml_lib_name, "llama_", symbols, &out_path);
+        objcopy_redefine(&objcopy, ggml_lib_name, PREFIX, symbols, &out_path);
 
         // Modifying the symbols llama depends on from ggml
 
@@ -616,7 +637,7 @@ mod compat {
                 },
             ],
         );
-        objcopy_redefine(&objcopy, llama_lib_name, "llama_", symbols, &out_path);
+        objcopy_redefine(&objcopy, llama_lib_name, PREFIX, symbols, &out_path);
 
         if let Some(gpu_lib_name) = additional_lib {
             // Modifying the symbols of the GPU library
