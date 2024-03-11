@@ -105,13 +105,25 @@ pub enum SamplerStage {
     TailFree(f32),
 
     /// A stage that uses a [`LlamaGrammar`] to remove tokens that do not align with a given
-    /// grammar.
+    /// grammar. Since this stage has to handle mutable state, an instance of this stage should
+    /// only be used in one completion.
     ///
     /// See [`GrammarStage`] and [`LlamaGrammar`] for more information.
     Grammar(GrammarStage),
 }
 
 impl SamplerStage {
+    /// Creates a new [`SamplerStage::Grammar`] from a [`LlamaGrammar`].
+    ///
+    /// `start_position` indicates the token position to begin applying the grammar at. [`None`]
+    /// indicates that the grammar begins at the end of context.
+    pub fn from_grammar(grammar: LlamaGrammar, start_position: Option<usize>) -> Self {
+        SamplerStage::Grammar(GrammarStage {
+            grammar,
+            accepted_to: start_position,
+        })
+    }
+
     /// Applies this [`SamplerStage`] to the provided token data array.
     ///
     /// Ensures that at least `min_keep` tokens remain after the
@@ -192,26 +204,11 @@ impl SamplerStage {
 /// Opaque internals for [`SamplerStage::Grammar`].
 #[derive(Clone, Debug)]
 pub struct GrammarStage {
-    original_grammar: LlamaGrammar,
     grammar: LlamaGrammar,
-    tokens: Vec<Token>,
+    accepted_to: Option<usize>,
 }
 
 impl GrammarStage {
-    /// Creates a new [`GrammarStage`] from a [`LlamaGrammar`]
-    pub fn new(grammar: LlamaGrammar) -> Self {
-        Self {
-            original_grammar: grammar.clone(),
-            grammar,
-            tokens: Vec::new()
-        }
-    }
-
-    /// Creates a new [`SamplerStage::Grammar`] from a [`LlamaGrammar`]
-    pub fn new_stage(grammar: LlamaGrammar) -> SamplerStage {
-        SamplerStage::Grammar(Self::new(grammar))
-    }
-
     fn apply(
         &mut self,
         context: *mut llama_context,
@@ -219,18 +216,11 @@ impl GrammarStage {
         mut candidates_p: llama_token_data_array,
         _min_keep: usize,
     ) {
-        let new_tokens = if let Some(suffix) = tokens.strip_prefix(self.tokens.as_slice()) {
-            suffix
-        } else {
-            self.tokens.clear();
-            self.grammar = self.original_grammar.clone();
-            tokens
-        };
-
-        for token in new_tokens {
+        let accepted_to = self.accepted_to.unwrap_or(tokens.len());
+        for token in &tokens[accepted_to..] {
             unsafe { llama_grammar_accept_token(context, self.grammar.grammar.as_ptr(), token.0) }
         }
-        self.tokens.extend_from_slice(new_tokens);
+        self.accepted_to = Some(tokens.len());
 
         let p_ptr = addr_of_mut!(candidates_p);
         unsafe { llama_sample_grammar(context, p_ptr, self.grammar.grammar.as_ptr()) };
