@@ -88,6 +88,7 @@ mod session;
 pub use model::*;
 pub use session::*;
 
+pub mod grammar;
 /// The standard sampler implementation.
 pub mod standard_sampler;
 
