@@ -14,12 +14,13 @@ use crate::{grammar::LlamaGrammar, Sampler, Token};
 ///
 /// Standard ordering for samplers (taken from [kobold.cpp](https://github.com/LostRuins/koboldcpp)):
 ///
-/// 1. [`SamplerStage::RepetitionPenalty`]
-/// 2. [`SamplerStage::Temperature`], [SamplerStage::DynamicTemperature]
-/// 3. [`SamplerStage::TopK`]
-/// 4. [`SamplerStage::TailFree`]
-/// 5. [`SamplerStage::Typical`]
-/// 6. [`SamplerStage::TopP`], [`SamplerStage::MinP`]
+/// 1. [`SamplerStage::Grammar`]
+/// 2. [`SamplerStage::RepetitionPenalty`]
+/// 3. [`SamplerStage::Temperature`], [SamplerStage::DynamicTemperature]
+/// 4. [`SamplerStage::TopK`]
+/// 5. [`SamplerStage::TailFree`]
+/// 6. [`SamplerStage::Typical`]
+/// 7. [`SamplerStage::TopP`], [`SamplerStage::MinP`]
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum SamplerStage {
@@ -103,16 +104,34 @@ pub enum SamplerStage {
     ///
     /// See: <https://www.trentonbricken.com/Tail-Free-Sampling/>
     TailFree(f32),
+
+    /// A stage that uses a [`LlamaGrammar`] to remove tokens that do not align with a given
+    /// grammar. Since this stage has to handle mutable state, an instance of this stage should
+    /// only be used in one completion.
+    ///
+    /// See [`GrammarStage`] and [`LlamaGrammar`] for more information.
+    Grammar(GrammarStage),
 }
 
 impl SamplerStage {
+    /// Creates a new [`SamplerStage::Grammar`] from a [`LlamaGrammar`].
+    ///
+    /// `start_position` indicates the token position to begin applying the grammar at. [`None`]
+    /// indicates that the grammar begins at the end of context.
+    pub fn from_grammar(grammar: LlamaGrammar, start_position: Option<usize>) -> Self {
+        SamplerStage::Grammar(GrammarStage {
+            grammar,
+            accepted_up_to: start_position,
+        })
+    }
+
     /// Applies this [`SamplerStage`] to the provided token data array.
     ///
     /// Ensures that at least `min_keep` tokens remain after the
     /// [`SamplerStage`]'s are applied.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn apply(
-        &self,
+        &mut self,
         context: *mut llama_context,
         tokens: &[Token],
         mut candidates_p: llama_token_data_array,
@@ -173,8 +192,43 @@ impl SamplerStage {
                 SamplerStage::TailFree(z) => {
                     llama_sample_tail_free(context, p_ptr, *z, min_keep);
                 }
+                SamplerStage::Grammar(stage) => {
+                    candidates_p = stage.apply(context, tokens, candidates_p, min_keep)
+                }
             }
         }
+
+        candidates_p
+    }
+}
+
+/// Opaque internals for [`SamplerStage::Grammar`].
+#[derive(Clone, Debug)]
+pub struct GrammarStage {
+    grammar: LlamaGrammar,
+    accepted_up_to: Option<usize>,
+}
+
+impl GrammarStage {
+    fn apply(
+        &mut self,
+        context: *mut llama_context,
+        tokens: &[Token],
+        mut candidates_p: llama_token_data_array,
+        _min_keep: usize,
+    ) -> llama_token_data_array {
+        // If `accepted_up_to` is `None`, assume that we should start at the end of context.
+        let accepted_up_to = self.accepted_up_to.unwrap_or(tokens.len());
+
+        // Accept all new tokens until the end of context.
+        for token in &tokens[accepted_up_to..] {
+            unsafe { llama_grammar_accept_token(context, self.grammar.grammar.as_ptr(), token.0) }
+        }
+        self.accepted_up_to = Some(tokens.len());
+
+        // Apply grammar sampling to `candidates_p`.
+        let p_ptr = addr_of_mut!(candidates_p);
+        unsafe { llama_sample_grammar(context, p_ptr, self.grammar.grammar.as_ptr()) };
 
         candidates_p
     }
@@ -232,7 +286,6 @@ impl TokenSelector {
 pub struct StandardSampler {
     stages: Vec<SamplerStage>,
     min_keep: usize,
-    grammar: Option<LlamaGrammar>,
     token_selector: TokenSelector,
 }
 
@@ -246,12 +299,10 @@ impl StandardSampler {
     pub fn new_softmax(
         stages: Vec<SamplerStage>,
         min_keep: usize,
-        grammar: Option<LlamaGrammar>,
     ) -> StandardSampler {
         StandardSampler {
             stages,
             min_keep,
-            grammar: grammar,
             token_selector: TokenSelector::Softmax,
         }
     }
@@ -262,7 +313,6 @@ impl StandardSampler {
         StandardSampler {
             stages: Vec::new(),
             min_keep: 0,
-            grammar: None,
             token_selector: TokenSelector::Greedy,
         }
     }
@@ -279,7 +329,6 @@ impl StandardSampler {
         StandardSampler {
             stages,
             min_keep,
-            grammar: None,
             token_selector: TokenSelector::Mirostat {
                 tau,
                 eta,
@@ -300,7 +349,6 @@ impl StandardSampler {
         StandardSampler {
             stages,
             min_keep,
-            grammar: None,
             token_selector: TokenSelector::MirostatV2 {
                 tau,
                 eta,
@@ -325,7 +373,6 @@ impl Default for StandardSampler {
                 SamplerStage::MinP(0.05),
                 SamplerStage::Temperature(0.8),
             ],
-            grammar: None,
             min_keep: 1,
             token_selector: TokenSelector::Softmax,
         }
@@ -340,25 +387,12 @@ impl Sampler for StandardSampler {
         tokens: &[Token],
         mut candidates_p: llama_token_data_array,
     ) -> Token {
-        let p_ptr = addr_of_mut!(candidates_p);
         let min_keep = self.min_keep.max(1);
 
-        // Note: We should sample grammar before applying other sampling stages.
-        if let Some(grammar) = self.grammar.as_mut() {
-            unsafe { llama_sample_grammar(context, p_ptr, grammar.grammar.as_ptr()) };
-        }
-
-        for stage in &self.stages {
+        for stage in &mut self.stages {
             candidates_p = stage.apply(context, tokens, candidates_p, min_keep);
         }
 
-        let token = self.token_selector.select(context, candidates_p);
-
-        // Note: We must accept the token into the grammar after sampling if a grammar is provided.
-        if let Some(grammar) = self.grammar.as_mut() {
-            unsafe { llama_grammar_accept_token(context, grammar.grammar.as_ptr(), token.0) }
-        }
-
-        token
+        self.token_selector.select(context, candidates_p)
     }
 }
