@@ -8,6 +8,7 @@ mod tests {
     use std::io;
     use std::io::Write;
     use std::path::Path;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
 
     use futures::StreamExt;
@@ -22,16 +23,20 @@ mod tests {
     };
 
     fn init_tracing() {
-        let format = tracing_subscriber::fmt::layer().compact();
-        let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or(
-            tracing_subscriber::EnvFilter::default()
-                .add_directive(tracing_subscriber::filter::LevelFilter::INFO.into()),
-        );
+        static SUBSCRIBER_SET: AtomicBool = AtomicBool::new(false);
 
-        tracing_subscriber::registry()
-            .with(format)
-            .with(filter)
-            .init();
+        if !SUBSCRIBER_SET.swap(true, Ordering::SeqCst) {
+            let format = tracing_subscriber::fmt::layer().compact();
+            let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or(
+                tracing_subscriber::EnvFilter::default()
+                    .add_directive(tracing_subscriber::filter::LevelFilter::INFO.into()),
+            );
+
+            tracing_subscriber::registry()
+                .with(format)
+                .with(filter)
+                .init();
+        }
     }
 
     async fn list_models(dir: impl AsRef<Path>) -> Vec<String> {

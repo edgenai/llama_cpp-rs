@@ -486,6 +486,13 @@ impl LlamaModel {
         })
     }
 
+    /// Calculates and returns an estimate of how much local memory a [`LlamaSession`] will take.
+    ///
+    /// At the moment, the value returned should always be more than the real value, possibly double.
+    ///
+    /// # Parameters
+    ///
+    /// * `session_params` - the parameters of the session to be created.
     pub fn estimate_session_size(&self, session_params: &SessionParams) -> usize {
         let kv_size = session_params.n_ctx as i64; // TODO exception for mamba arch
 
@@ -525,7 +532,9 @@ impl LlamaModel {
                 + ggml_graph_overhead_custom(LLAMA_MAX_NODES, false)
         };
 
-        cache_size + compute_size
+        // TODO while llama doesn't offer memory estimation utilities, this is the best that can be done realistically
+        // https://github.com/ggerganov/llama.cpp/issues/4315
+        (cache_size + compute_size) * 2
     }
 
     /// Performs embeddings decoding on the given batch and returns the result.
@@ -730,6 +739,17 @@ impl LlamaModel {
     }
 }
 
+/// Retrieves a value in string form from a model's metadata.
+///
+/// # Parameters
+///
+/// * `model` - a pointer to the model to retrieve values from.
+/// * `key` - the key of the metadata value.
+///
+/// #  Limitations
+///
+/// At the moment, the implementation will retrieves values of limited length, so this shouldn't be used to retrieve
+/// something like the model's grammar.
 fn get_metadata(model: *mut llama_model, key: &str) -> String {
     let c_key = if let Some(stripped) = key.strip_prefix("%s") {
         let arch_key = CStr::from_bytes_with_nul(b"general.architecture\0").unwrap(); // Should never fail
