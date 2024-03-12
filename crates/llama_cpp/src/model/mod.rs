@@ -783,7 +783,7 @@ fn get_metadata(model: *mut llama_model, key: &str) -> String {
             String::new()
         }
     } else {
-        error!(key, "Failed to retrieve metadata");
+        warn!(key, "Could not find metadata");
         String::new()
     }
 }

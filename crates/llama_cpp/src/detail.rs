@@ -96,9 +96,9 @@ pub(crate) unsafe extern "C" fn llama_log_callback(
     };
 
     match level {
-        ggml_log_level_GGML_LOG_LEVEL_ERROR => error!("ggml: {text}"),
-        ggml_log_level_GGML_LOG_LEVEL_INFO => info!("ggml: {text}"),
-        ggml_log_level_GGML_LOG_LEVEL_WARN => warn!("ggml: {text}"),
+        ggml_log_level_GGML_LOG_LEVEL_ERROR => error!(target: "llama.cpp", "{text}"),
+        ggml_log_level_GGML_LOG_LEVEL_INFO => info!(target: "llama.cpp", "{text}"),
+        ggml_log_level_GGML_LOG_LEVEL_WARN => warn!(target: "llama.cpp", "{text}"),
         _ => trace!("ggml: {text}"),
     }
 }
