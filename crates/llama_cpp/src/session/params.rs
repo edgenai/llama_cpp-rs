@@ -105,7 +105,7 @@ pub struct SessionParams {
     pub pooling: PoolingType,
 
     /// defragment the KV cache if holes/size > thold, < 0 disabled (default)
-    defrag_threshold: f32,
+    pub defrag_threshold: f32,
 }
 
 impl Default for SessionParams {

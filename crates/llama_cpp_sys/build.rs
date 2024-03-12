@@ -91,6 +91,7 @@ fn compile_bindings(out_path: &Path) {
     let bindings = bindgen::Builder::default()
         .header(LLAMA_PATH.join("ggml.h").to_string_lossy())
         .header(LLAMA_PATH.join("llama.h").to_string_lossy())
+        .derive_partialeq(true)
         .allowlist_type("ggml_.*")
         .allowlist_function("llama_.*")
         .allowlist_type("llama_.*")
