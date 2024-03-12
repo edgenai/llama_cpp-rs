@@ -21,19 +21,6 @@ mod tests {
         CompletionHandle, EmbeddingsParams, LlamaModel, LlamaParams, SessionParams, TokensToStrings,
     };
 
-    fn init_tracing() {
-        let format = tracing_subscriber::fmt::layer().compact();
-        let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or(
-            tracing_subscriber::EnvFilter::default()
-                .add_directive(tracing_subscriber::filter::LevelFilter::INFO.into()),
-        );
-
-        tracing_subscriber::registry()
-            .with(format)
-            .with(filter)
-            .init();
-    }
-
     async fn list_models(dir: impl AsRef<Path>) -> Vec<String> {
         let dir = dir.as_ref();
 
@@ -105,19 +92,9 @@ mod tests {
 
             let mut params = SessionParams::default();
             params.n_ctx = 2048;
-            params.n_batch = 256;
-
-            println!("Prediction: {}", model.estimate_session_size(&params));
-
             let mut session = model
                 .create_session(params)
                 .expect("Failed to create session");
-
-            println!("Reality: {}", session.async_memory_size().await);
-
-            if true {
-                return;
-            }
 
             session
                 .advance_context_async("<|SYSTEM|>You are a helpful assistant.")
