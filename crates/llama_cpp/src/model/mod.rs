@@ -2,25 +2,28 @@
 
 use std::borrow::Borrow;
 use std::cmp::min;
-use std::ffi::{CStr, CString};
+use std::ffi::{c_char, CStr, CString};
 use std::path::{Path, PathBuf};
 use std::ptr::slice_from_raw_parts;
 use std::sync::{atomic::AtomicUsize, Arc};
+use std::usize;
 
 use derive_more::{Deref, DerefMut};
 use futures::executor::block_on;
 use thiserror::Error;
 use tokio::sync::Mutex;
 use tokio::sync::RwLock;
-use tracing::{info, trace, warn};
+use tracing::{error, info, trace, warn};
 
 use backend::BackendRef;
 use llama_cpp_sys::{
-    llama_context, llama_context_default_params, llama_context_params, llama_decode,
-    llama_free_model, llama_get_embeddings_ith, llama_kv_cache_clear, llama_load_model_from_file,
-    llama_model, llama_n_ctx_train, llama_n_embd, llama_n_vocab, llama_new_context_with_model,
-    llama_token_bos, llama_token_eos, llama_token_eot, llama_token_get_text, llama_token_middle,
-    llama_token_nl, llama_token_prefix, llama_token_suffix, llama_token_to_piece, llama_tokenize,
+    ggml_graph_overhead_custom, ggml_row_size, ggml_tensor_overhead, ggml_type, llama_context,
+    llama_context_default_params, llama_context_params, llama_decode, llama_free_model,
+    llama_get_embeddings_ith, llama_kv_cache_clear, llama_load_model_from_file, llama_model,
+    llama_model_meta_val_str, llama_n_ctx_train, llama_n_embd, llama_n_vocab,
+    llama_new_context_with_model, llama_token_bos, llama_token_eos, llama_token_eot,
+    llama_token_get_text, llama_token_middle, llama_token_nl, llama_token_prefix,
+    llama_token_suffix, llama_token_to_piece, llama_tokenize,
 };
 pub use params::*;
 
@@ -131,6 +134,23 @@ pub struct LlamaModel {
 
     /// The number of tokens in the context the model was trained with.
     training_size: usize,
+
+    /// The number of layers in the model's network.
+    layers: usize,
+
+    /// ???
+    kv_heads: usize,
+    /// Dimension of keys (d_k). d_q is assumed to be the same, but there are n_head q heads, and only n_head_kv k-v heads
+    k_attention: usize,
+    /// Dimension of values (d_v) aka n_embd_head
+    v_attention: usize,
+
+    /// State Space Models conv kernel
+    ssm_d_conv: usize,
+    /// State Space Models inner size
+    ssm_d_inner: usize,
+    /// State Space Models state size
+    ssm_d_state: usize,
 }
 
 unsafe impl Send for LlamaModel {}
@@ -182,6 +202,36 @@ impl LlamaModel {
                 llama_n_vocab(model)
             };
 
+            let n_embd = unsafe { llama_n_embd(model) } as usize;
+
+            // Lots of redundant fetches here because llama.cpp doesn't expose any of this directly
+
+            let heads = get_metadata(model, "%s.attention.head_count")
+                .parse::<usize>()
+                .unwrap_or(0);
+
+            let layers = get_metadata(model, "%s.block_count")
+                .parse::<usize>()
+                .unwrap_or(0);
+            let kv_heads = get_metadata(model, "%s.attention.head_count_kv")
+                .parse::<usize>()
+                .unwrap_or(heads);
+            let k_attention = get_metadata(model, "%s.attention.key_length")
+                .parse::<usize>()
+                .unwrap_or(n_embd / heads);
+            let v_attention = get_metadata(model, "%s.attention.value_length")
+                .parse::<usize>()
+                .unwrap_or(n_embd / heads);
+            let ssm_d_conv = get_metadata(model, "%s.ssm.conv_kernel")
+                .parse::<usize>()
+                .unwrap_or(0);
+            let ssm_d_inner = get_metadata(model, "%s.ssm.inner_size")
+                .parse::<usize>()
+                .unwrap_or(0);
+            let ssm_d_state = get_metadata(model, "%s.ssm.state_size")
+                .parse::<usize>()
+                .unwrap_or(0);
+
             Ok(Self {
                 model: Arc::new(LlamaModelInner {
                     model,
@@ -195,8 +245,15 @@ impl LlamaModel {
                 infill_middle_token: Token(unsafe { llama_token_middle(model) }),
                 infill_suffix_token: Token(unsafe { llama_token_suffix(model) }),
                 eot_token: Token(unsafe { llama_token_eot(model) }),
-                embedding_length: unsafe { llama_n_embd(model) } as usize,
+                embedding_length: n_embd,
                 training_size: unsafe { llama_n_ctx_train(model) } as usize,
+                layers,
+                kv_heads,
+                k_attention,
+                v_attention,
+                ssm_d_conv,
+                ssm_d_inner,
+                ssm_d_state,
             })
         }
     }
@@ -429,6 +486,57 @@ impl LlamaModel {
         })
     }
 
+    /// Calculates and returns an estimate of how much local memory a [`LlamaSession`] will take.
+    ///
+    /// At the moment, the value returned should always be more than the real value, possibly double.
+    ///
+    /// # Parameters
+    ///
+    /// * `session_params` - the parameters of the session to be created.
+    pub fn estimate_session_size(&self, session_params: &SessionParams) -> usize {
+        let kv_size = session_params.n_ctx as i64; // TODO exception for mamba arch
+
+        // dimension of key embeddings across all k-v heads
+        let n_embd_k_gqa = self.k_attention * self.kv_heads;
+        // dimension of value embeddings across all k-v heads
+        let n_embd_v_gqa = self.v_attention * self.kv_heads;
+
+        // dimension of the rolling state embeddings
+        let n_embd_k_s = if self.ssm_d_conv > 0 {
+            (self.ssm_d_conv - 1) * self.ssm_d_inner
+        } else {
+            0
+        };
+        // dimension of the recurrent state embeddings
+        let n_embd_v_s = self.ssm_d_state * self.ssm_d_inner;
+
+        let k_row_size = unsafe {
+            ggml_row_size(
+                session_params.type_k as ggml_type,
+                (n_embd_k_gqa + n_embd_k_s) as i64 * kv_size,
+            )
+        };
+        let v_row_size = unsafe {
+            ggml_row_size(
+                session_params.type_v as ggml_type,
+                (n_embd_v_gqa + n_embd_v_s) as i64 * kv_size,
+            )
+        };
+
+        let cache_size = self.layers * (k_row_size + v_row_size);
+
+        const LLAMA_MAX_NODES: usize = 8192;
+
+        let compute_size = unsafe {
+            ggml_tensor_overhead() * LLAMA_MAX_NODES
+                + ggml_graph_overhead_custom(LLAMA_MAX_NODES, false)
+        };
+
+        // TODO while llama doesn't offer memory estimation utilities, this is the best that can be done realistically
+        // https://github.com/ggerganov/llama.cpp/issues/4315
+        (cache_size + compute_size) * 2
+    }
+
     /// Performs embeddings decoding on the given batch and returns the result.
     fn embeddings_decode(
         &self,
@@ -623,5 +731,79 @@ impl LlamaModel {
     /// Returns the number of tokens in the context the model was trained with.
     pub fn train_len(&self) -> usize {
         self.training_size
+    }
+
+    /// Return the number of layers of the model.
+    pub fn layers(&self) -> usize {
+        self.layers
+    }
+}
+
+/// Retrieves a value in string form from a model's metadata.
+///
+/// # Parameters
+///
+/// * `model` - a pointer to the model to retrieve values from.
+/// * `key` - the key of the metadata value.
+///
+/// #  Limitations
+///
+/// At the moment, the implementation will retrieves values of limited length, so this shouldn't be used to retrieve
+/// something like the model's grammar.
+fn get_metadata(model: *mut llama_model, key: &str) -> String {
+    let c_key = if let Some(stripped) = key.strip_prefix("%s") {
+        let arch_key = CStr::from_bytes_with_nul(b"general.architecture\0").unwrap(); // Should never fail
+        let mut arch_val = vec![0u8; 128];
+
+        let res = unsafe {
+            llama_model_meta_val_str(
+                model,
+                arch_key.as_ptr(),
+                arch_val.as_mut_ptr() as *mut c_char,
+                arch_val.len(),
+            )
+        };
+
+        if let Ok(len) = usize::try_from(res) {
+            if let Ok(c_str) = CStr::from_bytes_with_nul(&arch_val[..=len]) {
+                let formatted = format!("{}{stripped}", c_str.to_string_lossy());
+                CString::new(formatted.as_bytes()).unwrap()
+            } else {
+                // This should be unreachable
+                error!("Could not parse architecture metadata");
+                return String::new();
+            }
+        } else {
+            // This should be unreachable
+            error!("Could not find architecture metadata");
+            return String::new();
+        }
+    } else {
+        CString::new(key).unwrap()
+    };
+
+    // This implementation assumes large values such as the model's vocabulary will never be queried
+    let mut val = vec![0u8; 128];
+    let res = unsafe {
+        llama_model_meta_val_str(
+            model,
+            c_key.as_ptr(),
+            val.as_mut_ptr() as *mut c_char,
+            val.len(),
+        )
+    };
+
+    if let Ok(len) = usize::try_from(res) {
+        if let Ok(val_str) = CStr::from_bytes_with_nul(&val[..=len])
+            .map(move |val| val.to_string_lossy().to_string())
+        {
+            val_str
+        } else {
+            error!("Failed to parse retrieved metadata");
+            String::new()
+        }
+    } else {
+        warn!(key, "Could not find metadata");
+        String::new()
     }
 }

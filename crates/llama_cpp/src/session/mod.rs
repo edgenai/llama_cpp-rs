@@ -510,4 +510,18 @@ impl LlamaSession {
 
         Ok(copy)
     }
+
+    /// Returns the maximum size in bytes this session is occupying in memory.
+    ///
+    /// This function may **NOT*** be called in async environments, for an async version see [`async_memory_size`].
+    pub fn memory_size(&self) -> usize {
+        let ctx = self.inner.ctx.blocking_lock();
+        unsafe { llama_get_state_size(ctx.ptr) }
+    }
+
+    /// Asynchronously returns the maximum size in bytes this session is occupying in memory.
+    pub async fn async_memory_size(&self) -> usize {
+        let ctx = self.inner.ctx.lock().await;
+        unsafe { llama_get_state_size(ctx.ptr) }
+    }
 }

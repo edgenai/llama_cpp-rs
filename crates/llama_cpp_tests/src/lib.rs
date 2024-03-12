@@ -8,16 +8,36 @@ mod tests {
     use std::io;
     use std::io::Write;
     use std::path::Path;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
 
     use futures::StreamExt;
     use tokio::select;
     use tokio::time::Instant;
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
 
     use llama_cpp::standard_sampler::StandardSampler;
     use llama_cpp::{
         CompletionHandle, EmbeddingsParams, LlamaModel, LlamaParams, SessionParams, TokensToStrings,
     };
+
+    fn init_tracing() {
+        static SUBSCRIBER_SET: AtomicBool = AtomicBool::new(false);
+
+        if !SUBSCRIBER_SET.swap(true, Ordering::SeqCst) {
+            let format = tracing_subscriber::fmt::layer().compact();
+            let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or(
+                tracing_subscriber::EnvFilter::default()
+                    .add_directive(tracing_subscriber::filter::LevelFilter::INFO.into()),
+            );
+
+            tracing_subscriber::registry()
+                .with(format)
+                .with(filter)
+                .init();
+        }
+    }
 
     async fn list_models(dir: impl AsRef<Path>) -> Vec<String> {
         let dir = dir.as_ref();
@@ -66,6 +86,8 @@ mod tests {
 
     #[tokio::test]
     async fn execute_completions() {
+        init_tracing();
+
         let dir = std::env::var("LLAMA_CPP_TEST_MODELS").unwrap_or_else(|_| {
             panic!(
                 "LLAMA_CPP_TEST_MODELS environment variable not set. \
@@ -135,6 +157,8 @@ mod tests {
 
     #[tokio::test]
     async fn embed() {
+        init_tracing();
+
         let dir = std::env::var("LLAMA_EMBED_MODELS_DIR").unwrap_or_else(|_| {
             panic!(
                 "LLAMA_EMBED_MODELS_DIR environment variable not set. \
