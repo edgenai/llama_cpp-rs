@@ -21,6 +21,19 @@ mod tests {
         CompletionHandle, EmbeddingsParams, LlamaModel, LlamaParams, SessionParams, TokensToStrings,
     };
 
+    fn init_tracing() {
+        let format = tracing_subscriber::fmt::layer().compact();
+        let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or(
+            tracing_subscriber::EnvFilter::default()
+                .add_directive(tracing_subscriber::filter::LevelFilter::INFO.into()),
+        );
+
+        tracing_subscriber::registry()
+            .with(format)
+            .with(filter)
+            .init();
+    }
+
     async fn list_models(dir: impl AsRef<Path>) -> Vec<String> {
         let dir = dir.as_ref();
 
@@ -139,6 +152,8 @@ mod tests {
 
     #[tokio::test]
     async fn embed() {
+        init_tracing();
+
         let dir = std::env::var("LLAMA_EMBED_MODELS_DIR").unwrap_or_else(|_| {
             panic!(
                 "LLAMA_EMBED_MODELS_DIR environment variable not set. \
