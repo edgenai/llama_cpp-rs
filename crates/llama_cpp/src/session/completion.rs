@@ -6,7 +6,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use futures::{executor::block_on, Stream};
+use futures::Stream;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::{LlamaModel, Token};
@@ -26,7 +26,7 @@ impl CompletionHandle {
     /// Blocks the current thread, resolving to the next completed token, or `None` if EOS is
     /// reached.
     pub fn next_token(&mut self) -> Option<Token> {
-        block_on(self.rx.recv())
+        tokio::task::block_in_place(|| self.rx.blocking_recv())
     }
 
     /// Asynchronously yields the current thread, resolving to the next completed token, or `None`
@@ -78,7 +78,7 @@ impl Iterator for CompletionHandle {
     type Item = Token;
 
     fn next(&mut self) -> Option<Self::Item> {
-        block_on(self.rx.recv())
+        self.next_token()
     }
 }
 
