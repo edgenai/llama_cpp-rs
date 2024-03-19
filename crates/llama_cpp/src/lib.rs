@@ -45,7 +45,7 @@
 //! ## Dependencies
 //!
 //! This crate depends on (and builds atop) [`llama_cpp_sys`], and builds llama.cpp from source.
-//! You'll need `libclang`, `cmake`, and a C/C++ toolchain (`clang` is preferred) at the minimum.
+//! You'll need at least `libclang` and a C/C++ toolchain (`clang` is preferred).
 //! See [`llama_cpp_sys`] for more details.
 //!
 //! The bundled GGML and llama.cpp binaries are statically linked by default, and their logs
@@ -61,6 +61,12 @@
 //!
 //! While panics are considered less critical, **this crate should never panic**, and any
 //! panic should be considered a bug. We don't want your control flow!
+//!
+//! ## Building
+//!
+//! Keep in mind that [llama.cpp][llama.cpp] is very computationally heavy, meaning standard
+//! debug builds (running just `cargo build`/`cargo run`) will suffer greatly from the lack of optimisations. Therefore, unless
+//! debugging is really necessary, it is highly recommended to build and run using Cargo's `--release` flag.
 //!
 //! ## Minimum Stable Rust Version (MSRV) Policy
 //!

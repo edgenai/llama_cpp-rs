@@ -41,6 +41,12 @@ for completion in completions {
 This repository hosts the high-level bindings (`crates/llama_cpp`) as well as automatically generated bindings to
 llama.cpp's low-level C API (`crates/llama_cpp_sys`). Contributions are welcome--just keep the UX clean!
 
+## Building
+
+Keep in mind that [llama.cpp](https://github.com/ggerganov/llama.cpp) is very computationally heavy, meaning standard 
+debug builds (running just `cargo build`/`cargo run`) will suffer greatly from the lack of optimisations. Therefore, unless 
+debugging is really necessary, it is highly recommended to build and run using Cargo's `--release` flag.
+
 ## License
 
 MIT or Apache-2.0, at your option (the "Rust" license). See `LICENSE-MIT` and `LICENSE-APACHE`.
