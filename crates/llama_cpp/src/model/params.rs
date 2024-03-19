@@ -128,13 +128,15 @@ pub struct EmbeddingsParams {
 
 impl EmbeddingsParams {
     pub(crate) fn as_context_params(&self, batch_capacity: usize) -> llama_context_params {
+        // SAFETY: Stack constructor, always safe.
         let mut ctx_params = unsafe { llama_context_default_params() };
 
-        ctx_params.embedding = true;
+        ctx_params.embeddings = true;
         ctx_params.n_threads = self.n_threads;
         ctx_params.n_threads_batch = self.n_threads_batch;
         ctx_params.n_ctx = batch_capacity as u32;
         ctx_params.n_batch = batch_capacity as u32;
+        ctx_params.n_ubatch = batch_capacity as u32;
 
         ctx_params
     }

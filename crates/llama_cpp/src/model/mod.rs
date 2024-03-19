@@ -16,10 +16,10 @@ use backend::BackendRef;
 use llama_cpp_sys::{
     ggml_graph_overhead_custom, ggml_row_size, ggml_tensor_overhead, ggml_type, llama_context,
     llama_context_default_params, llama_context_params, llama_decode, llama_free_model,
-    llama_get_embeddings_ith, llama_kv_cache_clear, llama_load_model_from_file, llama_model,
-    llama_model_meta_val_str, llama_n_ctx_train, llama_n_embd, llama_n_vocab,
-    llama_new_context_with_model, llama_token_bos, llama_token_eos, llama_token_eot,
-    llama_token_get_text, llama_token_middle, llama_token_nl, llama_token_prefix,
+    llama_get_embeddings_ith, llama_get_embeddings_seq, llama_kv_cache_clear,
+    llama_load_model_from_file, llama_model, llama_model_meta_val_str, llama_n_ctx_train,
+    llama_n_embd, llama_n_vocab, llama_new_context_with_model, llama_token_bos, llama_token_eos,
+    llama_token_eot, llama_token_get_text, llama_token_middle, llama_token_nl, llama_token_prefix,
     llama_token_suffix, llama_token_to_piece, llama_tokenize,
 };
 pub use params::*;
@@ -555,7 +555,19 @@ impl LlamaModel {
 
         for i in 0..input_count {
             let embedding = unsafe {
-                let ptr = llama_get_embeddings_ith(context, i as i32);
+                let mut ptr = unsafe { llama_get_embeddings_seq(context, i as i32) };
+
+                if ptr.is_null() {
+                    // TODO change to the token index
+                    ptr = llama_get_embeddings_ith(context, i as i32);
+                }
+
+                if ptr.is_null() {
+                    return Err(LlamaContextError::EmbeddingsFailed(
+                        "Could not retrieved embeddings".to_string(),
+                    ));
+                }
+
                 slice_from_raw_parts(ptr, self.embedding_length)
                     .as_ref()
                     .ok_or(LlamaContextError::EmbeddingsFailed(
@@ -609,20 +621,14 @@ impl LlamaModel {
         } else {
             min(self.training_size, total_tokens)
         };
-        let mut batch = Batch::new(batch_capacity, 0, inputs.len());
+        let mut batch = Batch::new(batch_capacity, 0, 1);
         let mut out = Vec::with_capacity(inputs.len());
 
+        let context_params = params.as_context_params(batch_capacity);
         let context = unsafe {
-            // SAFETY: Stack constructor, always safe.
-            let mut ctx_params = llama_context_default_params();
-            ctx_params.embedding = true;
-            ctx_params.n_threads = params.n_threads;
-            ctx_params.n_threads_batch = params.n_threads_batch;
-            ctx_params.n_ctx = batch_capacity as u32;
-            ctx_params.n_batch = batch_capacity as u32;
             // SAFETY: due to `_model` being declared in the `LlamaContext`, `self` must live
             // for at least the lifetime of `LlamaContext`.
-            llama_new_context_with_model(**self.model, ctx_params)
+            llama_new_context_with_model(**self.model, context_params)
         };
 
         if context.is_null() {

@@ -473,11 +473,11 @@ fn compile_vulkan(cx: &mut Build, cxx: &mut Build) -> &'static str {
 
     if cfg!(debug_assertions) {
         cx.define("GGML_VULKAN_DEBUG", None)
+            .define("GGML_VULKAN_CHECK_RESULTS", None)
             .define("GGML_VULKAN_VALIDATE", None);
-        //.define("GGML_VULKAN_CHECK_RESULTS", None)
         cxx.define("GGML_VULKAN_DEBUG", None)
+            .define("GGML_VULKAN_CHECK_RESULTS", None)
             .define("GGML_VULKAN_VALIDATE", None);
-        //.define("GGML_VULKAN_CHECK_RESULTS", None)
     }
 
     cx.define("GGML_USE_VULKAN", None);
@@ -507,6 +507,7 @@ fn compile_ggml(mut cx: Build) {
 fn compile_llama(mut cxx: Build, _out_path: impl AsRef<Path>) {
     println!("Compiling Llama.cpp..");
     cxx.include(LLAMA_PATH.as_path())
+        .file(LLAMA_PATH.join("unicode.cpp"))
         .file(LLAMA_PATH.join("llama.cpp"))
         .compile("llama");
 }

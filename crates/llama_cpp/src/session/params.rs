@@ -57,6 +57,12 @@ pub struct SessionParams {
     /// prompt processing maximum batch size
     pub n_batch: u32,
 
+    /// physical maximum batch size used for computations
+    pub n_ubatch: u32,
+
+    /// max number of sequences (i.e. distinct states for recurrent models)
+    pub n_seq_max: u32,
+
     /// number of threads to use for generation
     pub n_threads: u32,
 
@@ -121,6 +127,8 @@ impl Default for SessionParams {
             seed: c_defaults.seed,
             n_ctx: c_defaults.n_ctx,
             n_batch: c_defaults.n_batch,
+            n_ubatch: c_defaults.n_ubatch,
+            n_seq_max: c_defaults.n_seq_max,
             n_threads: threads,
             n_threads_batch: threads,
             rope_scaling_type: c_defaults.rope_scaling_type,
@@ -133,7 +141,7 @@ impl Default for SessionParams {
             yarn_orig_ctx: c_defaults.yarn_orig_ctx,
             type_k: c_defaults.type_k as u32,
             type_v: c_defaults.type_v as u32,
-            embedding: c_defaults.embedding,
+            embedding: c_defaults.embeddings,
             offload_kqv: c_defaults.offload_kqv,
             pooling: c_defaults.pooling_type.into(),
             defrag_threshold: c_defaults.defrag_thold,
@@ -147,6 +155,8 @@ impl From<SessionParams> for llama_context_params {
             seed: value.seed,
             n_ctx: value.n_ctx,
             n_batch: value.n_batch,
+            n_ubatch: value.n_ubatch,
+            n_seq_max: value.n_seq_max,
             n_threads: value.n_threads,
             n_threads_batch: value.n_threads_batch,
             rope_scaling_type: value.rope_scaling_type,
@@ -163,7 +173,7 @@ impl From<SessionParams> for llama_context_params {
             type_k: value.type_k as ggml_type,
             type_v: value.type_v as ggml_type,
             logits_all: false, // Deprecated
-            embedding: value.embedding,
+            embeddings: value.embedding,
             offload_kqv: value.offload_kqv,
             pooling_type: value.pooling.into(),
             abort_callback: None,
@@ -178,6 +188,8 @@ impl From<llama_context_params> for SessionParams {
             seed: value.seed,
             n_ctx: value.n_ctx,
             n_batch: value.n_batch,
+            n_ubatch: value.n_ubatch,
+            n_seq_max: value.n_seq_max,
             n_threads: value.n_threads,
             n_threads_batch: value.n_threads_batch,
             rope_scaling_type: value.rope_scaling_type,
@@ -190,7 +202,7 @@ impl From<llama_context_params> for SessionParams {
             yarn_orig_ctx: value.yarn_orig_ctx,
             type_k: value.type_k as ggml_type,
             type_v: value.type_v as ggml_type,
-            embedding: value.embedding,
+            embedding: value.embeddings,
             offload_kqv: value.offload_kqv,
             pooling: value.pooling_type.into(),
             defrag_threshold: value.defrag_thold,

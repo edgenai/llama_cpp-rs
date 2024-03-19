@@ -11,9 +11,9 @@ use tokio::sync::mpsc::unbounded_channel;
 use tracing::{error, info, trace, warn};
 
 use llama_cpp_sys::{
-    llama_context, llama_copy_state_data, llama_decode, llama_free,
-    llama_get_logits_ith, llama_get_state_size, llama_kv_cache_seq_rm, llama_set_state_data,
-    llama_token_data, llama_token_data_array,
+    llama_context, llama_copy_state_data, llama_decode, llama_free, llama_get_logits_ith,
+    llama_get_state_size, llama_kv_cache_seq_rm, llama_set_state_data, llama_token_data,
+    llama_token_data_array,
 };
 
 use crate::standard_sampler::StandardSampler;
@@ -114,6 +114,10 @@ pub enum LlamaContextError {
     /// An error occurred on the other side of the FFI boundary; check your logs.
     #[error("failed to process embeddings (reason: {0})")]
     EmbeddingsFailed(String),
+
+    /// An error occurred operating over kv cache due to invalid range.
+    #[error("failed to operate over kv cache due to invalid range")]
+    InvalidRange,
 }
 
 impl LlamaSession {
@@ -358,7 +362,10 @@ impl LlamaSession {
     ///
     /// Note that calling this is not equivalent to calling [`LlamaSession::set_context`] with the
     /// same list of tokens that this method produces.
-    pub fn remove_tokens_in_range(&mut self, range: impl RangeBounds<usize>) {
+    pub fn remove_tokens_in_range(
+        &mut self,
+        range: impl RangeBounds<usize>,
+    ) -> Result<(), LlamaContextError> {
         let start_bound = match range.start_bound() {
             Bound::Included(i) => *i as i32,
             Bound::Excluded(i) => *i as i32 + 1,
@@ -374,13 +381,19 @@ impl LlamaSession {
         let context = self.inner.ctx.lock().unwrap();
 
         // -1 here to match all sequences
-        unsafe { llama_kv_cache_seq_rm(context.ptr, -1, start_bound, end_bound) }
+        let success = unsafe { llama_kv_cache_seq_rm(context.ptr, -1, start_bound, end_bound) };
+
+        if !success {
+            return Err(LlamaContextError::InvalidRange);
+        }
 
         self.inner.tokens.write().unwrap().drain(range);
+
+        Ok(())
     }
 
     /// Removes all but the first `n_tokens` tokens from the context.
-    pub fn truncate_context(&mut self, n_tokens: usize) {
+    pub fn truncate_context(&mut self, n_tokens: usize) -> Result<(), LlamaContextError> {
         self.remove_tokens_in_range(n_tokens..)
     }
 
@@ -403,7 +416,7 @@ impl LlamaSession {
 
         std::mem::drop(old_tokens);
 
-        self.truncate_context(shared_prefix);
+        self.truncate_context(shared_prefix)?;
         self.advance_context_with_tokens(&new_tokens[shared_prefix..])
     }
 

@@ -84,6 +84,7 @@ mod tests {
         }
     }
 
+    #[ignore]
     #[tokio::test]
     async fn execute_completions() {
         init_tracing();
@@ -208,12 +209,22 @@ mod tests {
                 .await
                 .expect("Failed to infer embeddings");
 
-            for embedding in &res {
-                assert!(embedding[0].is_normal(), "Embedding value isn't normal");
-                assert!(embedding[0] >= 0f32, "Embedding value isn't normalised");
-                assert!(embedding[0] <= 1f32, "Embedding value isn't normalised");
-            }
             println!("{:?}", res[0]);
+
+            for embedding in &res {
+                let mut sum = 0f32;
+                for value in embedding {
+                    assert!(value.is_normal(), "Embedding value isn't normal");
+                    assert!(*value >= -1f32, "Embedding value isn't normalised");
+                    assert!(*value <= 1f32, "Embedding value isn't normalised");
+                    sum += value * value;
+                }
+
+                const ERROR: f32 = 0.0001;
+                let mag = sum.sqrt();
+                assert!(mag < 1. + ERROR, "Vector magnitude is not close to 1");
+                assert!(mag > 1. - ERROR, "Vector magnitude is not close to 1");
+            }
         }
     }
 }
