@@ -171,3 +171,29 @@ impl From<SessionParams> for llama_context_params {
         }
     }
 }
+
+impl From<llama_context_params> for SessionParams {
+    fn from(value: llama_context_params) -> Self {
+        Self {
+            seed: value.seed,
+            n_ctx: value.n_ctx,
+            n_batch: value.n_batch,
+            n_threads: value.n_threads,
+            n_threads_batch: value.n_threads_batch,
+            rope_scaling_type: value.rope_scaling_type,
+            rope_freq_base: value.rope_freq_base,
+            rope_freq_scale: value.rope_freq_scale,
+            yarn_ext_factor: value.yarn_ext_factor,
+            yarn_attn_factor: value.yarn_attn_factor,
+            yarn_beta_fast: value.yarn_beta_fast,
+            yarn_beta_slow: value.yarn_beta_slow,
+            yarn_orig_ctx: value.yarn_orig_ctx,
+            type_k: value.type_k as ggml_type,
+            type_v: value.type_v as ggml_type,
+            embedding: value.embedding,
+            offload_kqv: value.offload_kqv,
+            pooling: value.pooling_type.into(),
+            defrag_threshold: value.defrag_thold,
+        }
+    }
+}

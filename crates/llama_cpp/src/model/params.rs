@@ -3,9 +3,9 @@
 use std::ptr;
 
 use llama_cpp_sys::{
-    llama_model_default_params, llama_model_params, llama_split_mode,
-    llama_split_mode_LLAMA_SPLIT_MODE_LAYER, llama_split_mode_LLAMA_SPLIT_MODE_NONE,
-    llama_split_mode_LLAMA_SPLIT_MODE_ROW,
+    llama_context_default_params, llama_context_params, llama_model_default_params,
+    llama_model_params, llama_split_mode, llama_split_mode_LLAMA_SPLIT_MODE_LAYER,
+    llama_split_mode_LLAMA_SPLIT_MODE_NONE, llama_split_mode_LLAMA_SPLIT_MODE_ROW,
 };
 
 /// Parameters for llama.
@@ -124,6 +124,20 @@ pub struct EmbeddingsParams {
 
     /// number of threads to use for batch processing
     pub n_threads_batch: u32,
+}
+
+impl EmbeddingsParams {
+    pub(crate) fn as_context_params(&self, batch_capacity: usize) -> llama_context_params {
+        let mut ctx_params = unsafe { llama_context_default_params() };
+
+        ctx_params.embedding = true;
+        ctx_params.n_threads = self.n_threads;
+        ctx_params.n_threads_batch = self.n_threads_batch;
+        ctx_params.n_ctx = batch_capacity as u32;
+        ctx_params.n_batch = batch_capacity as u32;
+
+        ctx_params
+    }
 }
 
 impl Default for EmbeddingsParams {

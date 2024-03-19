@@ -108,8 +108,16 @@ mod tests {
                 .await
                 .expect("Failed to load model");
 
-            let mut params = SessionParams::default();
-            params.n_ctx = 2048;
+            let params = SessionParams {
+                n_ctx: 2048,
+                ..Default::default()
+            };
+
+            println!(
+                "Predict chat session size: {}MB",
+                model.estimate_session_size(&params) / 1024 / 1024
+            );
+
             let mut session = model
                 .create_session(params)
                 .expect("Failed to create session");
@@ -176,9 +184,9 @@ mod tests {
 
             let mut input = vec![];
 
-            for _phrase_idx in 0..2 {
+            for _phrase_idx in 0..10 {
                 let mut phrase = String::new();
-                for _word_idx in 0..3000 {
+                for _word_idx in 0..200 {
                     phrase.push_str("word ");
                 }
                 phrase.truncate(phrase.len() - 1);
@@ -186,6 +194,15 @@ mod tests {
             }
 
             let params = EmbeddingsParams::default();
+
+            let tokenized_input = model
+                .tokenize_slice(&input, true, false)
+                .expect("Failed to tokenize input");
+            println!(
+                "Predict embeddings session size: {}MB",
+                model.estimate_embeddings_session_size(&tokenized_input, &params) / 1024 / 1024
+            );
+
             let res = model
                 .embeddings_async(&input, params)
                 .await

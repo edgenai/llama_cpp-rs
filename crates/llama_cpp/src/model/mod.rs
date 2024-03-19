@@ -683,6 +683,32 @@ impl LlamaModel {
             .unwrap()
     }
 
+    pub fn estimate_embeddings_session_size(
+        &self,
+        inputs: &[Vec<Token>],
+        params: &EmbeddingsParams,
+    ) -> usize {
+        let mut total_tokens = 0;
+        let mut max_tokens = 0;
+        for tokens in inputs {
+            total_tokens += tokens.len();
+            if max_tokens < tokens.len() {
+                max_tokens = tokens.len();
+            }
+        }
+
+        let batch_capacity = if max_tokens > self.training_size {
+            warn!("Large embedding input requires a context larger than the model's training context.");
+            max_tokens
+        } else {
+            min(self.training_size, total_tokens)
+        };
+
+        let context_params = params.as_context_params(batch_capacity);
+
+        self.estimate_session_size(&context_params.into()) * 2
+    }
+
     /// Returns the beginning of sentence (BOS) token for this context.
     pub fn bos(&self) -> Token {
         self.bos_token
