@@ -539,7 +539,7 @@ impl LlamaModel {
         &self,
         context: *mut llama_context,
         batch: &Batch,
-        input_count: usize,
+        token_counts: &[usize],
     ) -> Result<Vec<Vec<f32>>, LlamaContextError> {
         let res = unsafe {
             // clear previous kv_cache values (irrelevant for embeddings)
@@ -551,20 +551,19 @@ impl LlamaModel {
             return Err(LlamaContextError::DecodeFailed(res));
         }
 
-        let mut out = Vec::with_capacity(input_count);
+        let mut out = Vec::with_capacity(token_counts.len());
 
-        for i in 0..input_count {
+        for (i, count) in token_counts.iter().enumerate() {
             let embedding = unsafe {
                 let mut ptr = unsafe { llama_get_embeddings_seq(context, i as i32) };
 
                 if ptr.is_null() {
-                    // TODO change to the token index
-                    ptr = llama_get_embeddings_ith(context, i as i32);
+                    ptr = llama_get_embeddings_ith(context, (count - 1) as i32);
                 }
 
                 if ptr.is_null() {
                     return Err(LlamaContextError::EmbeddingsFailed(
-                        "Could not retrieved embeddings".to_string(),
+                        "Could not retrieve embeddings".to_string(),
                     ));
                 }
 
@@ -608,10 +607,11 @@ impl LlamaModel {
     ) -> Result<Vec<Vec<f32>>, LlamaContextError> {
         let mut total_tokens = 0;
         let mut max_tokens = 0;
-        for tokens in &inputs {
-            total_tokens += tokens.len();
-            if max_tokens < tokens.len() {
-                max_tokens = tokens.len();
+        let token_counts: Vec<usize> = inputs.iter().map(|v| v.len()).collect();
+        for count in &token_counts {
+            total_tokens += count;
+            if max_tokens < *count {
+                max_tokens = *count;
             }
         }
 
@@ -636,11 +636,17 @@ impl LlamaModel {
         }
 
         let mut batch_input_count = 0;
+        let mut submitted = 0;
         for input in inputs {
             if batch.tokens() + input.len() > batch_capacity {
                 trace!("Decoding {} embedding tokens", batch.tokens());
-                out.append(&mut self.embeddings_decode(context, &batch, batch_input_count)?);
+                out.append(&mut self.embeddings_decode(
+                    context,
+                    &batch,
+                    &token_counts[submitted..batch_input_count],
+                )?);
                 batch.clear();
+                submitted = batch_input_count;
                 batch_input_count = 0;
             }
 
@@ -653,7 +659,11 @@ impl LlamaModel {
 
         if 0 < batch_input_count {
             trace!("Decoding remaining {} embedding tokens", batch.tokens());
-            out.append(&mut self.embeddings_decode(context, &batch, batch_input_count)?);
+            out.append(&mut self.embeddings_decode(
+                context,
+                &batch,
+                &token_counts[submitted..batch_input_count],
+            )?);
         }
 
         Ok(out)
