@@ -3,8 +3,7 @@
 
 use std::ptr;
 
-use futures::executor::block_on;
-use tokio::sync::Mutex;
+use std::sync::Mutex;
 use tracing::error;
 
 use llama_cpp_sys::{
@@ -16,7 +15,7 @@ use crate::detail;
 
 /// The current instance of [`Backend`], if it exists. Also stored is a reference count used for
 /// initialisation and freeing.
-static BACKEND: Mutex<Option<(Backend, usize)>> = Mutex::const_new(None);
+static BACKEND: Mutex<Option<(Backend, usize)>> = Mutex::new(None);
 
 /// Empty struct used to initialise and free the [llama.cpp][llama.cpp] backend when it is created
 /// dropped respectively.
@@ -64,8 +63,8 @@ pub(crate) struct BackendRef {}
 
 impl BackendRef {
     /// Creates a new reference, initialising [`BACKEND`] if necessary.
-    pub(crate) async fn new() -> Self {
-        let mut lock = BACKEND.lock().await;
+    pub(crate) fn new() -> Self {
+        let mut lock = BACKEND.lock().unwrap();
         if let Some((_, count)) = lock.as_mut() {
             *count += 1;
         } else {
@@ -78,23 +77,21 @@ impl BackendRef {
 
 impl Drop for BackendRef {
     fn drop(&mut self) {
-        block_on(async move {
-            let mut lock = BACKEND.lock().await;
-            if let Some((_, count)) = lock.as_mut() {
-                *count -= 1;
+        let mut lock = BACKEND.lock().unwrap();
+        if let Some((_, count)) = lock.as_mut() {
+            *count -= 1;
 
-                if *count == 0 {
-                    lock.take();
-                }
-            } else {
-                error!("Backend as already been freed, this should never happen")
+            if *count == 0 {
+                lock.take();
             }
-        });
+        } else {
+            error!("Backend as already been freed, this should never happen")
+        }
     }
 }
 
 impl Clone for BackendRef {
     fn clone(&self) -> Self {
-        block_on(Self::new())
+        Self::new()
     }
 }

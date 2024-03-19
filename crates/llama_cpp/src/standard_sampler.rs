@@ -296,10 +296,7 @@ impl StandardSampler {
     ///
     /// Ensures that at least `min_keep` tokens remain after the
     /// [`SamplerStage`]'s are applied.
-    pub fn new_softmax(
-        stages: Vec<SamplerStage>,
-        min_keep: usize,
-    ) -> StandardSampler {
+    pub fn new_softmax(stages: Vec<SamplerStage>, min_keep: usize) -> StandardSampler {
         StandardSampler {
             stages,
             min_keep,

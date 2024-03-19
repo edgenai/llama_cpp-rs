@@ -5,14 +5,11 @@ use std::cmp::min;
 use std::ffi::{c_char, CStr, CString};
 use std::path::{Path, PathBuf};
 use std::ptr::slice_from_raw_parts;
-use std::sync::{atomic::AtomicUsize, Arc};
+use std::sync::{atomic::AtomicUsize, Arc, Mutex, RwLock};
 use std::usize;
 
 use derive_more::{Deref, DerefMut};
-use futures::executor::block_on;
 use thiserror::Error;
-use tokio::sync::Mutex;
-use tokio::sync::RwLock;
 use tracing::{error, info, trace, warn};
 
 use backend::BackendRef;
@@ -167,7 +164,7 @@ impl LlamaModel {
         file_path: impl AsRef<Path>,
         model_params: LlamaParams,
     ) -> Result<Self, LlamaLoadError> {
-        let backend_ref = block_on(BackendRef::new());
+        let backend_ref = BackendRef::new();
         info!("Loading model \"{}\"", file_path.as_ref().to_string_lossy());
 
         let file_path = file_path.as_ref();
