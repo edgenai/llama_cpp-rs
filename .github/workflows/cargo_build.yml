@@ -29,6 +29,8 @@ jobs:
           echo "$(brew --prefix llvm@17)/bin" >> $GITHUB_PATH
       - name: Update submodules
         run: git submodule update --init --recursive
+      - name: Clean
+        run: cargo clean
       - name: Build
         run: cargo build --verbose
       - name: Run tests
