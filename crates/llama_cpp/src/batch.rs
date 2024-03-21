@@ -1,6 +1,6 @@
 //! Implements the [`Batch`] struct
 
-use llama_cpp_sys::{llama_batch, llama_batch_free, llama_batch_init, llama_seq_id};
+use llama_cpp_sys::{llama_batch, llama_batch_free, llama_batch_init};
 use tracing::trace;
 
 use crate::Token;
@@ -113,15 +113,6 @@ impl Batch {
 
     pub fn tokens(&self) -> usize {
         self.inner.n_tokens as usize
-    }
-
-    pub fn seq_id(&self, idx: usize) -> llama_seq_id {
-        assert!(idx < self.max_sequences, "Out of bounds access");
-
-        unsafe {
-            let seq_ptr = *self.inner.seq_id.add(idx);
-            seq_ptr.read()
-        }
     }
 
     pub fn handle(&self) -> llama_batch {

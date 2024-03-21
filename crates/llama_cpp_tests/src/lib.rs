@@ -84,7 +84,6 @@ mod tests {
         }
     }
 
-    #[ignore]
     #[tokio::test]
     async fn execute_completions() {
         init_tracing();
@@ -114,14 +113,21 @@ mod tests {
                 ..Default::default()
             };
 
+            let estimate = model.estimate_session_size(&params);
             println!(
-                "Predict chat session size: {}MB",
-                model.estimate_session_size(&params) / 1024 / 1024
+                "Predict chat session size: Host {}MB, Device {}MB",
+                estimate.host_memory / 1024 / 1024,
+                estimate.device_memory / 1024 / 1024,
             );
 
             let mut session = model
                 .create_session(params)
                 .expect("Failed to create session");
+
+            println!(
+                "Real chat session size: Host {}MB",
+                session.memory_size() / 1024 / 1024
+            );
 
             session
                 .advance_context_async("<|SYSTEM|>You are a helpful assistant.")
@@ -199,9 +205,11 @@ mod tests {
             let tokenized_input = model
                 .tokenize_slice(&input, true, false)
                 .expect("Failed to tokenize input");
+            let estimate = model.estimate_embeddings_session_size(&tokenized_input, &params);
             println!(
-                "Predict embeddings session size: {}MB",
-                model.estimate_embeddings_session_size(&tokenized_input, &params) / 1024 / 1024
+                "Predict embeddings session size: Host {}MB, Device {}MB",
+                estimate.host_memory / 1024 / 1024,
+                estimate.device_memory / 1024 / 1024,
             );
 
             let res = model

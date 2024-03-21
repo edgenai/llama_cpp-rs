@@ -3,6 +3,7 @@
 use std::borrow::Borrow;
 use std::cmp::min;
 use std::ffi::{c_char, CStr, CString};
+use std::mem::size_of;
 use std::path::{Path, PathBuf};
 use std::ptr::slice_from_raw_parts;
 use std::sync::{atomic::AtomicUsize, Arc, Mutex, RwLock};
@@ -14,8 +15,7 @@ use tracing::{error, info, trace, warn};
 
 use backend::BackendRef;
 use llama_cpp_sys::{
-    ggml_graph_overhead_custom, ggml_row_size, ggml_tensor_overhead, ggml_type, llama_context,
-    llama_context_default_params, llama_context_params, llama_decode, llama_free_model,
+    ggml_row_size, ggml_type, llama_context, llama_context_params, llama_decode, llama_free_model,
     llama_get_embeddings_ith, llama_get_embeddings_seq, llama_kv_cache_clear,
     llama_load_model_from_file, llama_model, llama_model_meta_val_str, llama_n_ctx_train,
     llama_n_embd, llama_n_vocab, llama_new_context_with_model, llama_token_bos, llama_token_eos,
@@ -27,7 +27,7 @@ pub use params::*;
 use crate::batch::Batch;
 use crate::{
     LlamaContextError, LlamaContextInner, LlamaInternalError, LlamaSession, LlamaSessionInner,
-    SessionParams, Token,
+    ResourceUsage, SessionParams, Token,
 };
 
 mod backend;
@@ -490,7 +490,7 @@ impl LlamaModel {
     /// # Parameters
     ///
     /// * `session_params` - the parameters of the session to be created.
-    pub fn estimate_session_size(&self, session_params: &SessionParams) -> usize {
+    pub fn estimate_session_size(&self, session_params: &SessionParams) -> ResourceUsage {
         let kv_size = session_params.n_ctx as i64; // TODO exception for mamba arch
 
         // dimension of key embeddings across all k-v heads
@@ -521,17 +521,31 @@ impl LlamaModel {
         };
 
         let cache_size = self.layers * (k_row_size + v_row_size);
+        trace!("KV cache size: {}MB", cache_size / 1024 / 1024);
 
-        const LLAMA_MAX_NODES: usize = 8192;
-
-        let compute_size = unsafe {
-            ggml_tensor_overhead() * LLAMA_MAX_NODES
-                + ggml_graph_overhead_custom(LLAMA_MAX_NODES, false)
+        let batch = min(session_params.n_ctx, session_params.n_batch) as usize;
+        let logits_size = self.vocabulary_size * batch;
+        let embed_size = if session_params.embedding {
+            self.embedding_length * batch
+        } else {
+            0
         };
+        let output_size = (logits_size + embed_size) * size_of::<f32>();
+        trace!("Output buffer size: {}MB", output_size / 1024 / 1024);
 
-        // TODO while llama doesn't offer memory estimation utilities, this is the best that can be done realistically
-        // https://github.com/ggerganov/llama.cpp/issues/4315
-        (cache_size + compute_size) * 2
+        // const LLAMA_MAX_NODES: usize = 8192;
+        //
+        // let compute_size = unsafe {
+        //     ggml_tensor_overhead() * LLAMA_MAX_NODES
+        //         + ggml_graph_overhead_custom(LLAMA_MAX_NODES, false)
+        // };
+
+        ResourceUsage {
+            host_memory: cache_size + output_size,
+            // TODO while llama doesn't offer memory estimation utilities, this is the best that can be done realistically
+            // https://github.com/ggerganov/llama.cpp/issues/4315
+            device_memory: output_size,
+        }
     }
 
     /// Performs embeddings decoding on the given batch and returns the result.
@@ -555,7 +569,7 @@ impl LlamaModel {
 
         for (i, count) in token_counts.iter().enumerate() {
             let embedding = unsafe {
-                let mut ptr = unsafe { llama_get_embeddings_seq(context, i as i32) };
+                let mut ptr = llama_get_embeddings_seq(context, i as i32);
 
                 if ptr.is_null() {
                     ptr = llama_get_embeddings_ith(context, (count - 1) as i32);
@@ -696,11 +710,13 @@ impl LlamaModel {
             .unwrap()
     }
 
+    /// Return an estimation of how much memory embeddings generation is gonna require for the provided parameters and
+    /// input tokens.
     pub fn estimate_embeddings_session_size(
         &self,
         inputs: &[Vec<Token>],
         params: &EmbeddingsParams,
-    ) -> usize {
+    ) -> ResourceUsage {
         let mut total_tokens = 0;
         let mut max_tokens = 0;
         for tokens in inputs {
@@ -719,7 +735,9 @@ impl LlamaModel {
 
         let context_params = params.as_context_params(batch_capacity);
 
-        self.estimate_session_size(&context_params.into()) * 2
+        let mut ret = self.estimate_session_size(&context_params.into());
+        ret.device_memory += ret.device_memory / 4; // bad workaround for device memory, see estimate_session_size
+        ret
     }
 
     /// Returns the beginning of sentence (BOS) token for this context.

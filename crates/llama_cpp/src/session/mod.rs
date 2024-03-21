@@ -502,7 +502,9 @@ impl LlamaSession {
         Ok(copy)
     }
 
-    /// Returns the maximum size in bytes this session is occupying in memory.
+    /// Returns the maximum size in bytes this session is occupying in host memory.
+    ///
+    /// Currently there is no way to check the amount of memory occupied in devices.
     pub fn memory_size(&self) -> usize {
         let ctx = self.inner.ctx.lock().unwrap();
         unsafe { llama_get_state_size(ctx.ptr) }

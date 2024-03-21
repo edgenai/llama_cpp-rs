@@ -133,3 +133,20 @@ pub trait Sampler {
         candidates_p: llama_token_data_array,
     ) -> Token;
 }
+
+/// Memory requirements for something.
+///
+/// This is typically returned by [`LlamaModel::estimate_session_size`] and
+/// [`LlamaModel::estimate_embeddings_session_size`] as an estimation of memory usage.
+#[derive(Debug)]
+pub struct ResourceUsage {
+    /// The host memory required, in bytes.
+    pub host_memory: usize,
+
+    /// The device memory required, in bytes.
+    ///
+    /// The device depends on features used to build this crate, as well as the main gpu selected during model creation.
+    ///
+    /// If the device is the CPU, this is additional host memory required.
+    pub device_memory: usize,
+}
