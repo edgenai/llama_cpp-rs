@@ -99,10 +99,6 @@ pub enum LlamaContextError {
         max_tokens: usize,
     },
 
-    /// No tokens were provided at all.
-    #[error("no tokens were provided")]
-    NoTokensProvided,
-
     /// An error occurred on the other side of the FFI boundary; check your logs.
     #[error("failed to create llama context")]
     SessionFailed,
@@ -132,7 +128,7 @@ impl LlamaSession {
         let n_tokens = tokens.len();
 
         if n_tokens == 0 {
-            return Err(LlamaContextError::NoTokensProvided);
+            return Ok(());
         }
 
         if n_tokens > i32::MAX as usize {
@@ -268,25 +264,48 @@ impl LlamaSession {
             let vocab = session.model().vocabulary_size();
             let end_of_stream = session.model().eos();
             let mut token_buf = session.inner.tokens.write().unwrap();
-            let mut count = 0;
             let mut batch = Batch::new(1, 0, 1);
-            let mut i = session.inner.last_batch_size.load(Ordering::SeqCst);
             let mut current_pos = history_size;
 
-            loop {
-                let mut candidates = unsafe {
-                    let logits = llama_get_logits_ith(context.ptr, (i - 1) as i32);
+            // There are no logits; we need to send the last token back through
+            // the model
+            if session.inner.last_batch_size.load(Ordering::SeqCst) == 0 {
+                // Remove last token
+                unsafe { llama_kv_cache_seq_rm(context.ptr, -1, token_buf.len() as i32 - 1, -1) }
 
-                    let mut candidates = vec![];
-                    for id in 0..vocab {
-                        candidates.push(llama_token_data {
+                // Decode last token
+                batch.add(*token_buf.last().unwrap(), current_pos, &[0], true);
+                let res = unsafe { llama_decode(context.ptr, batch.handle()) };
+
+                if res != 0 {
+                    error!("Failed to decode context ({res})");
+                    return;
+                }
+
+                // Update state with new batch
+                session
+                    .inner
+                    .last_batch_size
+                    .store(batch.tokens(), Ordering::SeqCst);
+                batch.clear();
+            }
+
+            loop {
+                // Get logit values from the model and store them in a `llama_token_data_array`
+                let mut candidates: Vec<llama_token_data> = {
+                    let i = session.inner.last_batch_size.load(Ordering::SeqCst);
+                    let logits = unsafe { llama_get_logits_ith(context.ptr, (i - 1) as i32) };
+                    let logits = unsafe { std::slice::from_raw_parts(logits, vocab) };
+
+                    logits
+                        .iter()
+                        .enumerate()
+                        .map(|(id, &logit)| llama_token_data {
                             id: id as i32,
-                            logit: *logits.add(id),
+                            logit,
                             p: 0.0,
                         })
-                    }
-
-                    candidates
+                        .collect()
                 };
 
                 let candidates_p = llama_token_data_array {
@@ -295,38 +314,38 @@ impl LlamaSession {
                     sorted: false,
                 };
 
+                // Select the next token
                 let token = sampler.sample(context.ptr, &token_buf, candidates_p);
 
-                match tx.send(token) {
-                    Ok(_) => (),
-                    Err(e) => {
-                        let token_str =
-                            String::from_utf8_lossy(session.inner.model.detokenize(e.0));
-                        warn!("Cannot send token ({}): {}", token_str, e);
-                        break;
-                    }
-                };
-
-                if token == end_of_stream || max_predictions <= count {
-                    break;
+                // Send the token to the `CompletionHandle`, exiting on failure
+                if let Err(e) = tx.send(token) {
+                    let token_str = String::from_utf8_lossy(session.inner.model.detokenize(e.0));
+                    warn!("Cannot send token ({}): {}", token_str, e);
+                    return;
                 }
 
-                batch.clear();
-                batch.add(token, current_pos, &[0], true);
+                // Exit if eos is generated or maximum number of predictions is reached
+                if token == end_of_stream || token_buf.len() - history_size >= max_predictions {
+                    return;
+                }
 
+                // Create a batch with the generated token and decode it
+                batch.add(token, current_pos, &[0], true);
                 let res = unsafe { llama_decode(context.ptr, batch.handle()) };
 
                 if res != 0 {
                     error!("Failed to decode context ({res})");
-                    break;
+                    return;
                 }
 
-                count += 1;
-                i = batch.tokens();
-
-                session.inner.last_batch_size.store(i, Ordering::SeqCst);
+                // Update state with new token/batch
+                session
+                    .inner
+                    .last_batch_size
+                    .store(batch.tokens(), Ordering::SeqCst);
                 current_pos = token_buf.len();
                 token_buf.push(token);
+                batch.clear();
             }
         });
 
@@ -358,7 +377,7 @@ impl LlamaSession {
 
     /// Removes all tokens within the given range without performing any prompt
     /// processing. If you remove tokens in the middle of context, it is recommended that you keep
-    /// the first ~4 tokens of context when you do this, per <https://arxiv.org/abs/2309.17453>.
+    /// the first ~4 tokens of context, per <https://arxiv.org/abs/2309.17453>.
     ///
     /// Note that calling this is not equivalent to calling [`LlamaSession::set_context`] with the
     /// same list of tokens that this method produces.
@@ -385,6 +404,11 @@ impl LlamaSession {
 
         if !success {
             return Err(LlamaContextError::InvalidRange);
+        }
+
+        // If we delete to the end, store 0 to indicate that there are no logits
+        if end_bound == -1 || end_bound as usize >= self.context_size() {
+            self.inner.last_batch_size.store(0, Ordering::SeqCst);
         }
 
         self.inner.tokens.write().unwrap().drain(range);
