@@ -141,7 +141,7 @@ impl ParseCallbacks for GGMLLinkRename {
 /// Add platform appropriate flags and definitions present in all compilation configurations.
 fn push_common_flags(cx: &mut Build, cxx: &mut Build) {
     cx.static_flag(true).cpp(false).std("c11");
-    cxx.static_flag(true).cpp(true).std("c++14"); // MSVC does not support C++11
+    cxx.static_flag(true).cpp(true).std("c++11");
 
     if !cfg!(debug_assertions) {
         cx.define("NDEBUG", None);

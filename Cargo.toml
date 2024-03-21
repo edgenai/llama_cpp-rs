@@ -8,4 +8,4 @@ members = [
 
 [workspace.dependencies]
 futures = "0.3.30"
-tokio = "1.34.0"
+tokio = "1.36.0"
