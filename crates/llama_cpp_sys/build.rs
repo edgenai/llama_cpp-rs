@@ -93,7 +93,7 @@ static LLAMA_PATH: Lazy<PathBuf> = Lazy::new(|| PathBuf::from("./thirdparty/llam
 
 fn compile_bindings(out_path: &Path) {
     println!("Generating bindings..");
-    let bindings = bindgen::Builder::default()
+    let mut bindings = bindgen::Builder::default()
         .header(LLAMA_PATH.join("ggml.h").to_string_lossy())
         .header(LLAMA_PATH.join("llama.h").to_string_lossy())
         .derive_partialeq(true)
@@ -104,19 +104,25 @@ fn compile_bindings(out_path: &Path) {
         .default_enum_style(EnumVariation::Rust {
             non_exhaustive: true,
         })
-        .constified_enum("llama_gretype")
-        .parse_callbacks(Box::new(GGMLLinkRename {}))
-        .generate()
-        .expect("Unable to generate bindings");
+        .constified_enum("llama_gretype");
+
+    #[cfg(feature = "compat")]
+    {
+        bindings = bindings.parse_callbacks(Box::new(GGMLLinkRename {}));
+    }
+
+    let bindings = bindings.generate().expect("Unable to generate bindings");
 
     bindings
         .write_to_file(out_path.join("bindings.rs"))
         .expect("Couldn't write bindings!");
 }
 
+#[cfg(feature = "compat")]
 #[derive(Debug)]
 struct GGMLLinkRename {}
 
+#[cfg(feature = "compat")]
 impl ParseCallbacks for GGMLLinkRename {
     fn generated_link_name_override(&self, item_info: ItemInfo<'_>) -> Option<String> {
         match item_info.kind {
