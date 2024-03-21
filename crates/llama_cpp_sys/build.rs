@@ -86,7 +86,7 @@ compile_error!("feature \"clblas\" cannot be enabled alongside other GPU based f
 compile_error!("feature \"vulkan\" cannot be enabled alongside other GPU based features");
 
 /// The general prefix used to rename conflicting symbols.
-const PREFIX: &str = "llama_";
+const PREFIX: &str = "llm_";
 
 static LLAMA_PATH: Lazy<PathBuf> = Lazy::new(|| PathBuf::from("./thirdparty/llama.cpp"));
 
@@ -351,9 +351,9 @@ fn compile_blis(cx: &mut Build) {
 fn compile_hipblas(cx: &mut Build, cxx: &mut Build, mut hip: Build) -> &'static str {
     const DEFAULT_ROCM_PATH_STR: &str = "/opt/rocm/";
 
-    let rocm_path_str = env::var("ROCM_PATH").map_err(|_| {
-        DEFAULT_ROCM_PATH_STR.to_string()
-    }).unwrap();
+    let rocm_path_str = env::var("ROCM_PATH")
+        .map_err(|_| DEFAULT_ROCM_PATH_STR.to_string())
+        .unwrap();
     println!("Compiling HIPBLAS GGML. Using ROCm from {rocm_path_str}");
 
     let rocm_path = PathBuf::from(rocm_path_str);
