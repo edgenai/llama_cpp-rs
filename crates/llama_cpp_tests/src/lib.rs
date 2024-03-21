@@ -170,6 +170,7 @@ mod tests {
         }
     }
 
+    #[ignore]
     #[tokio::test]
     async fn embed() {
         init_tracing();

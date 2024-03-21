@@ -271,7 +271,9 @@ impl LlamaSession {
             // the model
             if session.inner.last_batch_size.load(Ordering::SeqCst) == 0 {
                 // Remove last token
-                unsafe { llama_kv_cache_seq_rm(context.ptr, -1, token_buf.len() as i32 - 1, -1) }
+                unsafe {
+                    llama_kv_cache_seq_rm(context.ptr, -1, token_buf.len() as i32 - 1, -1);
+                }
 
                 // Decode last token
                 batch.add(*token_buf.last().unwrap(), current_pos, &[0], true);
