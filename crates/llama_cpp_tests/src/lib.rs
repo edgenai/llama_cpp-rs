@@ -144,6 +144,7 @@ mod tests {
 
             let mut completions = session
                 .start_completing_with(StandardSampler::default(), 1024)
+                .expect("Failed to start completing")
                 .into_strings();
             let timeout_by = Instant::now() + Duration::from_secs(500);
 
@@ -170,7 +171,6 @@ mod tests {
         }
     }
 
-    #[ignore]
     #[tokio::test]
     async fn embed() {
         init_tracing();

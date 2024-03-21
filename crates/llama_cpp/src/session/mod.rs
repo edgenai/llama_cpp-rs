@@ -114,6 +114,10 @@ pub enum LlamaContextError {
     /// An error occurred operating over kv cache due to invalid range.
     #[error("failed to operate over kv cache due to invalid range")]
     InvalidRange,
+
+    /// Tried to start completing before advancing the context.
+    #[error("cannot start completing without any history")]
+    NoContext,
 }
 
 impl LlamaSession {
@@ -237,7 +241,7 @@ impl LlamaSession {
 
     /// Starts generating tokens at the end of the context using a greedy
     /// sampler
-    pub fn start_completing(&mut self) -> CompletionHandle {
+    pub fn start_completing(&mut self) -> Result<CompletionHandle, LlamaContextError> {
         self.start_completing_with(
             StandardSampler::new_greedy(),
             self.params().n_ctx as usize - self.context_size(),
@@ -249,14 +253,19 @@ impl LlamaSession {
         &mut self,
         mut sampler: S,
         max_predictions: usize,
-    ) -> CompletionHandle
+    ) -> Result<CompletionHandle, LlamaContextError>
     where
         S: Sampler + Send + Sync + 'static,
     {
-        let (tx, rx) = unbounded_channel();
         let history_size = self.context_size();
+
+        if history_size == 0 {
+            return Err(LlamaContextError::NoContext);
+        }
+
+        let (tx, rx) = unbounded_channel();
         let session = self.clone();
-        // TODO deal with 0 history size
+
         info!("Generating completions with {history_size} tokens of history");
 
         thread::spawn(move || {
@@ -351,10 +360,10 @@ impl LlamaSession {
             }
         });
 
-        CompletionHandle {
+        Ok(CompletionHandle {
             rx,
             model: self.model(),
-        }
+        })
     }
 
     /// Returns the model this session was created from.
