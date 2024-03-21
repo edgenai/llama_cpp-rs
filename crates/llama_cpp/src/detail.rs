@@ -6,14 +6,11 @@
 
 use std::ffi::{c_char, c_void, CStr};
 
-use tracing::{error, info, trace, warn};
+use tracing::{debug, error, info, warn};
 
-use llama_cpp_sys::{
-    ggml_log_level, ggml_log_level_GGML_LOG_LEVEL_ERROR, ggml_log_level_GGML_LOG_LEVEL_INFO,
-    ggml_log_level_GGML_LOG_LEVEL_WARN,
-};
+use llama_cpp_sys::ggml_log_level;
 
-#[no_mangle]
+#[allow(improper_ctypes_definitions)]
 pub(crate) unsafe extern "C" fn llama_log_callback(
     level: ggml_log_level,
     text: *const c_char,
@@ -37,9 +34,10 @@ pub(crate) unsafe extern "C" fn llama_log_callback(
     };
 
     match level {
-        ggml_log_level_GGML_LOG_LEVEL_ERROR => error!(target: "llama.cpp", "{text}"),
-        ggml_log_level_GGML_LOG_LEVEL_INFO => info!(target: "llama.cpp", "{text}"),
-        ggml_log_level_GGML_LOG_LEVEL_WARN => warn!(target: "llama.cpp", "{text}"),
-        _ => trace!("ggml: {text}"),
+        ggml_log_level::GGML_LOG_LEVEL_INFO => info!(target: "llama.cpp", "{text}"),
+        ggml_log_level::GGML_LOG_LEVEL_DEBUG => debug!(target: "llama.cpp", "{text}"),
+        ggml_log_level::GGML_LOG_LEVEL_WARN => warn!(target: "llama.cpp", "{text}"),
+        ggml_log_level::GGML_LOG_LEVEL_ERROR => error!(target: "llama.cpp", "{text}"),
+        _ => unimplemented!(),
     }
 }

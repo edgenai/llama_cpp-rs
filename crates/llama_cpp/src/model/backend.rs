@@ -7,8 +7,7 @@ use std::sync::Mutex;
 use tracing::error;
 
 use llama_cpp_sys::{
-    ggml_numa_strategy_GGML_NUMA_STRATEGY_DISTRIBUTE, llama_backend_free, llama_backend_init,
-    llama_log_set, llama_numa_init,
+    ggml_numa_strategy, llama_backend_free, llama_backend_init, llama_log_set, llama_numa_init,
 };
 
 use crate::detail;
@@ -35,7 +34,7 @@ impl Backend {
             llama_backend_init();
 
             // TODO look into numa strategies, this should probably be part of the API
-            llama_numa_init(ggml_numa_strategy_GGML_NUMA_STRATEGY_DISTRIBUTE);
+            llama_numa_init(ggml_numa_strategy::GGML_NUMA_STRATEGY_DISTRIBUTE);
 
             // SAFETY: performs a simple assignment to static variables. Should only execute once
             // before any logs are made.

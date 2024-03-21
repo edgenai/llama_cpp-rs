@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use bindgen::callbacks::{ItemInfo, ItemKind, ParseCallbacks};
+use bindgen::EnumVariation;
 use cc::Build;
 use once_cell::sync::Lazy;
 
@@ -100,6 +101,10 @@ fn compile_bindings(out_path: &Path) {
         .allowlist_type("ggml_.*")
         .allowlist_function("llama_.*")
         .allowlist_type("llama_.*")
+        .default_enum_style(EnumVariation::Rust {
+            non_exhaustive: true,
+        })
+        .constified_enum("llama_gretype")
         .parse_callbacks(Box::new(GGMLLinkRename {}))
         .generate()
         .expect("Unable to generate bindings");
@@ -714,7 +719,7 @@ mod compat {
                     },
                 ],
             );
-            objcopy_redefine(&objcopy, &lib_name, "llama_", symbols, &out_path);
+            objcopy_redefine(&objcopy, &lib_name, PREFIX, symbols, &out_path);
         }
     }
 

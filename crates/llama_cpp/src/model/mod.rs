@@ -15,7 +15,7 @@ use tracing::{error, info, trace, warn};
 
 use backend::BackendRef;
 use llama_cpp_sys::{
-    ggml_row_size, ggml_type, llama_context, llama_context_params, llama_decode, llama_free_model,
+    ggml_row_size, llama_context, llama_context_params, llama_decode, llama_free_model,
     llama_get_embeddings_ith, llama_get_embeddings_seq, llama_kv_cache_clear,
     llama_load_model_from_file, llama_model, llama_model_meta_val_str, llama_n_ctx_train,
     llama_n_embd, llama_n_vocab, llama_new_context_with_model, llama_token_bos, llama_token_eos,
@@ -509,13 +509,13 @@ impl LlamaModel {
 
         let k_row_size = unsafe {
             ggml_row_size(
-                session_params.type_k as ggml_type,
+                session_params.type_k.into(),
                 (n_embd_k_gqa + n_embd_k_s) as i64 * kv_size,
             )
         };
         let v_row_size = unsafe {
             ggml_row_size(
-                session_params.type_v as ggml_type,
+                session_params.type_v.into(),
                 (n_embd_v_gqa + n_embd_v_s) as i64 * kv_size,
             )
         };
