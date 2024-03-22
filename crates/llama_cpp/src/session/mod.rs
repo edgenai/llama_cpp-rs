@@ -110,6 +110,14 @@ pub enum LlamaContextError {
     /// An error occurred on the other side of the FFI boundary; check your logs.
     #[error("failed to process embeddings (reason: {0})")]
     EmbeddingsFailed(String),
+
+    /// An error occurred operating over kv cache due to invalid range.
+    #[error("failed to operate over kv cache due to invalid range")]
+    InvalidRange,
+
+    /// Tried to start completing before advancing the context.
+    #[error("cannot start completing without any history")]
+    NoContext,
 }
 
 impl LlamaSession {
@@ -233,7 +241,7 @@ impl LlamaSession {
 
     /// Starts generating tokens at the end of the context using a greedy
     /// sampler
-    pub fn start_completing(&mut self) -> CompletionHandle {
+    pub fn start_completing(&mut self) -> Result<CompletionHandle, LlamaContextError> {
         self.start_completing_with(
             StandardSampler::new_greedy(),
             self.params().n_ctx as usize - self.context_size(),
@@ -245,14 +253,19 @@ impl LlamaSession {
         &mut self,
         mut sampler: S,
         max_predictions: usize,
-    ) -> CompletionHandle
+    ) -> Result<CompletionHandle, LlamaContextError>
     where
         S: Sampler + Send + Sync + 'static,
     {
-        let (tx, rx) = unbounded_channel();
         let history_size = self.context_size();
+
+        if history_size == 0 {
+            return Err(LlamaContextError::NoContext);
+        }
+
+        let (tx, rx) = unbounded_channel();
         let session = self.clone();
-        // TODO deal with 0 history size
+
         info!("Generating completions with {history_size} tokens of history");
 
         thread::spawn(move || {
@@ -267,7 +280,9 @@ impl LlamaSession {
             // the model
             if session.inner.last_batch_size.load(Ordering::SeqCst) == 0 {
                 // Remove last token
-                unsafe { llama_kv_cache_seq_rm(context.ptr, -1, token_buf.len() as i32 - 1, -1) }
+                unsafe {
+                    llama_kv_cache_seq_rm(context.ptr, -1, token_buf.len() as i32 - 1, -1);
+                }
 
                 // Decode last token
                 batch.add(*token_buf.last().unwrap(), current_pos, &[0], true);
@@ -345,10 +360,10 @@ impl LlamaSession {
             }
         });
 
-        CompletionHandle {
+        Ok(CompletionHandle {
             rx,
             model: self.model(),
-        }
+        })
     }
 
     /// Returns the model this session was created from.
@@ -377,7 +392,10 @@ impl LlamaSession {
     ///
     /// Note that calling this is not equivalent to calling [`LlamaSession::set_context`] with the
     /// same list of tokens that this method produces.
-    pub fn remove_tokens_in_range(&mut self, range: impl RangeBounds<usize>) {
+    pub fn remove_tokens_in_range(
+        &mut self,
+        range: impl RangeBounds<usize>,
+    ) -> Result<(), LlamaContextError> {
         let start_bound = match range.start_bound() {
             Bound::Included(i) => *i as i32,
             Bound::Excluded(i) => *i as i32 + 1,
@@ -393,7 +411,11 @@ impl LlamaSession {
         let context = self.inner.ctx.lock().unwrap();
 
         // -1 here to match all sequences
-        unsafe { llama_kv_cache_seq_rm(context.ptr, -1, start_bound, end_bound) }
+        let success = unsafe { llama_kv_cache_seq_rm(context.ptr, -1, start_bound, end_bound) };
+
+        if !success {
+            return Err(LlamaContextError::InvalidRange);
+        }
 
         // If we delete to the end, store 0 to indicate that there are no logits
         if end_bound == -1 || end_bound as usize >= self.context_size() {
@@ -401,10 +423,12 @@ impl LlamaSession {
         }
 
         self.inner.tokens.write().unwrap().drain(range);
+
+        Ok(())
     }
 
     /// Removes all but the first `n_tokens` tokens from the context.
-    pub fn truncate_context(&mut self, n_tokens: usize) {
+    pub fn truncate_context(&mut self, n_tokens: usize) -> Result<(), LlamaContextError> {
         self.remove_tokens_in_range(n_tokens..)
     }
 
@@ -427,7 +451,7 @@ impl LlamaSession {
 
         std::mem::drop(old_tokens);
 
-        self.truncate_context(shared_prefix);
+        self.truncate_context(shared_prefix)?;
         self.advance_context_with_tokens(&new_tokens[shared_prefix..])
     }
 
@@ -513,7 +537,9 @@ impl LlamaSession {
         Ok(copy)
     }
 
-    /// Returns the maximum size in bytes this session is occupying in memory.
+    /// Returns the maximum size in bytes this session is occupying in host memory.
+    ///
+    /// Currently there is no way to check the amount of memory occupied in devices.
     pub fn memory_size(&self) -> usize {
         let ctx = self.inner.ctx.lock().unwrap();
         unsafe { llama_get_state_size(ctx.ptr) }

@@ -3,9 +3,8 @@
 use std::ptr;
 
 use llama_cpp_sys::{
-    llama_model_default_params, llama_model_params, llama_split_mode,
-    llama_split_mode_LLAMA_SPLIT_MODE_LAYER, llama_split_mode_LLAMA_SPLIT_MODE_NONE,
-    llama_split_mode_LLAMA_SPLIT_MODE_ROW,
+    llama_context_default_params, llama_context_params, llama_model_default_params,
+    llama_model_params, llama_split_mode,
 };
 
 /// Parameters for llama.
@@ -65,9 +64,9 @@ pub enum SplitMode {
 impl From<SplitMode> for llama_split_mode {
     fn from(value: SplitMode) -> Self {
         match value {
-            SplitMode::None => llama_split_mode_LLAMA_SPLIT_MODE_NONE,
-            SplitMode::Layer => llama_split_mode_LLAMA_SPLIT_MODE_LAYER,
-            SplitMode::Row => llama_split_mode_LLAMA_SPLIT_MODE_ROW,
+            SplitMode::None => llama_split_mode::LLAMA_SPLIT_MODE_NONE,
+            SplitMode::Layer => llama_split_mode::LLAMA_SPLIT_MODE_LAYER,
+            SplitMode::Row => llama_split_mode::LLAMA_SPLIT_MODE_ROW,
         }
     }
 }
@@ -76,9 +75,9 @@ impl From<llama_split_mode> for SplitMode {
     fn from(value: llama_split_mode) -> Self {
         #![allow(non_upper_case_globals)]
         match value {
-            llama_split_mode_LLAMA_SPLIT_MODE_NONE => SplitMode::None,
-            llama_split_mode_LLAMA_SPLIT_MODE_LAYER => SplitMode::Layer,
-            llama_split_mode_LLAMA_SPLIT_MODE_ROW => SplitMode::Row,
+            llama_split_mode::LLAMA_SPLIT_MODE_NONE => SplitMode::None,
+            llama_split_mode::LLAMA_SPLIT_MODE_LAYER => SplitMode::Layer,
+            llama_split_mode::LLAMA_SPLIT_MODE_ROW => SplitMode::Row,
             _ => unimplemented!(),
         }
     }
@@ -124,6 +123,22 @@ pub struct EmbeddingsParams {
 
     /// number of threads to use for batch processing
     pub n_threads_batch: u32,
+}
+
+impl EmbeddingsParams {
+    pub(crate) fn as_context_params(&self, batch_capacity: usize) -> llama_context_params {
+        // SAFETY: Stack constructor, always safe.
+        let mut ctx_params = unsafe { llama_context_default_params() };
+
+        ctx_params.embeddings = true;
+        ctx_params.n_threads = self.n_threads;
+        ctx_params.n_threads_batch = self.n_threads_batch;
+        ctx_params.n_ctx = batch_capacity as u32;
+        ctx_params.n_batch = batch_capacity as u32;
+        ctx_params.n_ubatch = batch_capacity as u32;
+
+        ctx_params
+    }
 }
 
 impl Default for EmbeddingsParams {

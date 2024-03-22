@@ -108,11 +108,26 @@ mod tests {
                 .await
                 .expect("Failed to load model");
 
-            let mut params = SessionParams::default();
-            params.n_ctx = 2048;
+            let params = SessionParams {
+                n_ctx: 2048,
+                ..Default::default()
+            };
+
+            let estimate = model.estimate_session_size(&params);
+            println!(
+                "Predict chat session size: Host {}MB, Device {}MB",
+                estimate.host_memory / 1024 / 1024,
+                estimate.device_memory / 1024 / 1024,
+            );
+
             let mut session = model
                 .create_session(params)
                 .expect("Failed to create session");
+
+            println!(
+                "Real chat session size: Host {}MB",
+                session.memory_size() / 1024 / 1024
+            );
 
             session
                 .advance_context_async("<|SYSTEM|>You are a helpful assistant.")
@@ -129,6 +144,7 @@ mod tests {
 
             let mut completions = session
                 .start_completing_with(StandardSampler::default(), 1024)
+                .expect("Failed to start completing")
                 .into_strings();
             let timeout_by = Instant::now() + Duration::from_secs(500);
 
@@ -176,9 +192,9 @@ mod tests {
 
             let mut input = vec![];
 
-            for _phrase_idx in 0..2 {
+            for _phrase_idx in 0..10 {
                 let mut phrase = String::new();
-                for _word_idx in 0..3000 {
+                for _word_idx in 0..200 {
                     phrase.push_str("word ");
                 }
                 phrase.truncate(phrase.len() - 1);
@@ -186,17 +202,38 @@ mod tests {
             }
 
             let params = EmbeddingsParams::default();
+
+            let tokenized_input = model
+                .tokenize_slice(&input, true, false)
+                .expect("Failed to tokenize input");
+            let estimate = model.estimate_embeddings_session_size(&tokenized_input, &params);
+            println!(
+                "Predict embeddings session size: Host {}MB, Device {}MB",
+                estimate.host_memory / 1024 / 1024,
+                estimate.device_memory / 1024 / 1024,
+            );
+
             let res = model
                 .embeddings_async(&input, params)
                 .await
                 .expect("Failed to infer embeddings");
 
-            for embedding in &res {
-                assert!(embedding[0].is_normal(), "Embedding value isn't normal");
-                assert!(embedding[0] >= 0f32, "Embedding value isn't normalised");
-                assert!(embedding[0] <= 1f32, "Embedding value isn't normalised");
-            }
             println!("{:?}", res[0]);
+
+            for embedding in &res {
+                let mut sum = 0f32;
+                for value in embedding {
+                    assert!(value.is_normal(), "Embedding value isn't normal");
+                    assert!(*value >= -1f32, "Embedding value isn't normalised");
+                    assert!(*value <= 1f32, "Embedding value isn't normalised");
+                    sum += value * value;
+                }
+
+                const ERROR: f32 = 0.0001;
+                let mag = sum.sqrt();
+                assert!(mag < 1. + ERROR, "Vector magnitude is not close to 1");
+                assert!(mag > 1. - ERROR, "Vector magnitude is not close to 1");
+            }
         }
     }
 }

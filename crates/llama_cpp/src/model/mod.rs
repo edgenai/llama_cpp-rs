@@ -3,6 +3,7 @@
 use std::borrow::Borrow;
 use std::cmp::min;
 use std::ffi::{c_char, CStr, CString};
+use std::mem::size_of;
 use std::path::{Path, PathBuf};
 use std::ptr::slice_from_raw_parts;
 use std::sync::{atomic::AtomicUsize, Arc, Mutex, RwLock};
@@ -14,12 +15,11 @@ use tracing::{error, info, trace, warn};
 
 use backend::BackendRef;
 use llama_cpp_sys::{
-    ggml_graph_overhead_custom, ggml_row_size, ggml_tensor_overhead, ggml_type, llama_context,
-    llama_context_default_params, llama_context_params, llama_decode, llama_free_model,
-    llama_get_embeddings_ith, llama_kv_cache_clear, llama_load_model_from_file, llama_model,
-    llama_model_meta_val_str, llama_n_ctx_train, llama_n_embd, llama_n_vocab,
-    llama_new_context_with_model, llama_token_bos, llama_token_eos, llama_token_eot,
-    llama_token_get_text, llama_token_middle, llama_token_nl, llama_token_prefix,
+    ggml_row_size, llama_context, llama_context_params, llama_decode, llama_free_model,
+    llama_get_embeddings_ith, llama_get_embeddings_seq, llama_kv_cache_clear,
+    llama_load_model_from_file, llama_model, llama_model_meta_val_str, llama_n_ctx_train,
+    llama_n_embd, llama_n_vocab, llama_new_context_with_model, llama_token_bos, llama_token_eos,
+    llama_token_eot, llama_token_get_text, llama_token_middle, llama_token_nl, llama_token_prefix,
     llama_token_suffix, llama_token_to_piece, llama_tokenize,
 };
 pub use params::*;
@@ -27,7 +27,7 @@ pub use params::*;
 use crate::batch::Batch;
 use crate::{
     LlamaContextError, LlamaContextInner, LlamaInternalError, LlamaSession, LlamaSessionInner,
-    SessionParams, Token,
+    ResourceUsage, SessionParams, Token,
 };
 
 mod backend;
@@ -490,7 +490,7 @@ impl LlamaModel {
     /// # Parameters
     ///
     /// * `session_params` - the parameters of the session to be created.
-    pub fn estimate_session_size(&self, session_params: &SessionParams) -> usize {
+    pub fn estimate_session_size(&self, session_params: &SessionParams) -> ResourceUsage {
         let kv_size = session_params.n_ctx as i64; // TODO exception for mamba arch
 
         // dimension of key embeddings across all k-v heads
@@ -509,29 +509,43 @@ impl LlamaModel {
 
         let k_row_size = unsafe {
             ggml_row_size(
-                session_params.type_k as ggml_type,
+                session_params.type_k.into(),
                 (n_embd_k_gqa + n_embd_k_s) as i64 * kv_size,
             )
         };
         let v_row_size = unsafe {
             ggml_row_size(
-                session_params.type_v as ggml_type,
+                session_params.type_v.into(),
                 (n_embd_v_gqa + n_embd_v_s) as i64 * kv_size,
             )
         };
 
         let cache_size = self.layers * (k_row_size + v_row_size);
+        trace!("KV cache size: {}MB", cache_size / 1024 / 1024);
 
-        const LLAMA_MAX_NODES: usize = 8192;
-
-        let compute_size = unsafe {
-            ggml_tensor_overhead() * LLAMA_MAX_NODES
-                + ggml_graph_overhead_custom(LLAMA_MAX_NODES, false)
+        let batch = min(session_params.n_ctx, session_params.n_batch) as usize;
+        let logits_size = self.vocabulary_size * batch;
+        let embed_size = if session_params.embedding {
+            self.embedding_length * batch
+        } else {
+            0
         };
+        let output_size = (logits_size + embed_size) * size_of::<f32>();
+        trace!("Output buffer size: {}MB", output_size / 1024 / 1024);
 
-        // TODO while llama doesn't offer memory estimation utilities, this is the best that can be done realistically
-        // https://github.com/ggerganov/llama.cpp/issues/4315
-        (cache_size + compute_size) * 2
+        // const LLAMA_MAX_NODES: usize = 8192;
+        //
+        // let compute_size = unsafe {
+        //     ggml_tensor_overhead() * LLAMA_MAX_NODES
+        //         + ggml_graph_overhead_custom(LLAMA_MAX_NODES, false)
+        // };
+
+        ResourceUsage {
+            host_memory: cache_size + output_size,
+            // TODO while llama doesn't offer memory estimation utilities, this is the best that can be done realistically
+            // https://github.com/ggerganov/llama.cpp/issues/4315
+            device_memory: output_size,
+        }
     }
 
     /// Performs embeddings decoding on the given batch and returns the result.
@@ -539,7 +553,7 @@ impl LlamaModel {
         &self,
         context: *mut llama_context,
         batch: &Batch,
-        input_count: usize,
+        token_counts: &[usize],
     ) -> Result<Vec<Vec<f32>>, LlamaContextError> {
         let res = unsafe {
             // clear previous kv_cache values (irrelevant for embeddings)
@@ -551,11 +565,22 @@ impl LlamaModel {
             return Err(LlamaContextError::DecodeFailed(res));
         }
 
-        let mut out = Vec::with_capacity(input_count);
+        let mut out = Vec::with_capacity(token_counts.len());
 
-        for i in 0..input_count {
+        for (i, count) in token_counts.iter().enumerate() {
             let embedding = unsafe {
-                let ptr = llama_get_embeddings_ith(context, i as i32);
+                let mut ptr = llama_get_embeddings_seq(context, i as i32);
+
+                if ptr.is_null() {
+                    ptr = llama_get_embeddings_ith(context, (count - 1) as i32);
+                }
+
+                if ptr.is_null() {
+                    return Err(LlamaContextError::EmbeddingsFailed(
+                        "Could not retrieve embeddings".to_string(),
+                    ));
+                }
+
                 slice_from_raw_parts(ptr, self.embedding_length)
                     .as_ref()
                     .ok_or(LlamaContextError::EmbeddingsFailed(
@@ -596,10 +621,11 @@ impl LlamaModel {
     ) -> Result<Vec<Vec<f32>>, LlamaContextError> {
         let mut total_tokens = 0;
         let mut max_tokens = 0;
-        for tokens in &inputs {
-            total_tokens += tokens.len();
-            if max_tokens < tokens.len() {
-                max_tokens = tokens.len();
+        let token_counts: Vec<usize> = inputs.iter().map(|v| v.len()).collect();
+        for count in &token_counts {
+            total_tokens += count;
+            if max_tokens < *count {
+                max_tokens = *count;
             }
         }
 
@@ -609,20 +635,14 @@ impl LlamaModel {
         } else {
             min(self.training_size, total_tokens)
         };
-        let mut batch = Batch::new(batch_capacity, 0, inputs.len());
+        let mut batch = Batch::new(batch_capacity, 0, 1);
         let mut out = Vec::with_capacity(inputs.len());
 
+        let context_params = params.as_context_params(batch_capacity);
         let context = unsafe {
-            // SAFETY: Stack constructor, always safe.
-            let mut ctx_params = llama_context_default_params();
-            ctx_params.embedding = true;
-            ctx_params.n_threads = params.n_threads;
-            ctx_params.n_threads_batch = params.n_threads_batch;
-            ctx_params.n_ctx = batch_capacity as u32;
-            ctx_params.n_batch = batch_capacity as u32;
             // SAFETY: due to `_model` being declared in the `LlamaContext`, `self` must live
             // for at least the lifetime of `LlamaContext`.
-            llama_new_context_with_model(**self.model, ctx_params)
+            llama_new_context_with_model(**self.model, context_params)
         };
 
         if context.is_null() {
@@ -630,11 +650,17 @@ impl LlamaModel {
         }
 
         let mut batch_input_count = 0;
+        let mut submitted = 0;
         for input in inputs {
             if batch.tokens() + input.len() > batch_capacity {
                 trace!("Decoding {} embedding tokens", batch.tokens());
-                out.append(&mut self.embeddings_decode(context, &batch, batch_input_count)?);
+                out.append(&mut self.embeddings_decode(
+                    context,
+                    &batch,
+                    &token_counts[submitted..batch_input_count],
+                )?);
                 batch.clear();
+                submitted = batch_input_count;
                 batch_input_count = 0;
             }
 
@@ -647,7 +673,11 @@ impl LlamaModel {
 
         if 0 < batch_input_count {
             trace!("Decoding remaining {} embedding tokens", batch.tokens());
-            out.append(&mut self.embeddings_decode(context, &batch, batch_input_count)?);
+            out.append(&mut self.embeddings_decode(
+                context,
+                &batch,
+                &token_counts[submitted..batch_input_count],
+            )?);
         }
 
         Ok(out)
@@ -678,6 +708,36 @@ impl LlamaModel {
         tokio::task::spawn_blocking(move || model.embeddings_process(inputs, params))
             .await
             .unwrap()
+    }
+
+    /// Return an estimation of how much memory embeddings generation is gonna require for the provided parameters and
+    /// input tokens.
+    pub fn estimate_embeddings_session_size(
+        &self,
+        inputs: &[Vec<Token>],
+        params: &EmbeddingsParams,
+    ) -> ResourceUsage {
+        let mut total_tokens = 0;
+        let mut max_tokens = 0;
+        for tokens in inputs {
+            total_tokens += tokens.len();
+            if max_tokens < tokens.len() {
+                max_tokens = tokens.len();
+            }
+        }
+
+        let batch_capacity = if max_tokens > self.training_size {
+            warn!("Large embedding input requires a context larger than the model's training context.");
+            max_tokens
+        } else {
+            min(self.training_size, total_tokens)
+        };
+
+        let context_params = params.as_context_params(batch_capacity);
+
+        let mut ret = self.estimate_session_size(&context_params.into());
+        ret.device_memory += ret.device_memory / 4; // bad workaround for device memory, see estimate_session_size
+        ret
     }
 
     /// Returns the beginning of sentence (BOS) token for this context.
