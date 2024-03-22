@@ -106,7 +106,10 @@ fn compile_bindings(out_path: &Path) {
         })
         .constified_enum("llama_gretype");
 
-    #[cfg(feature = "compat")]
+    #[cfg(all(
+        feature = "compat",
+        not(any(target_os = "macos", target_os = "ios", target_os = "dragonfly"))
+    ))]
     {
         bindings = bindings.parse_callbacks(Box::new(GGMLLinkRename {}));
     }
@@ -118,11 +121,17 @@ fn compile_bindings(out_path: &Path) {
         .expect("Couldn't write bindings!");
 }
 
-#[cfg(feature = "compat")]
+#[cfg(all(
+    feature = "compat",
+    not(any(target_os = "macos", target_os = "ios", target_os = "dragonfly"))
+))]
 #[derive(Debug)]
 struct GGMLLinkRename {}
 
-#[cfg(feature = "compat")]
+#[cfg(all(
+    feature = "compat",
+    not(any(target_os = "macos", target_os = "ios", target_os = "dragonfly"))
+))]
 impl ParseCallbacks for GGMLLinkRename {
     fn generated_link_name_override(&self, item_info: ItemInfo<'_>) -> Option<String> {
         match item_info.kind {
@@ -623,13 +632,23 @@ fn main() {
     compile_ggml(cx);
     compile_llama(cxx, &out_path);
 
-    #[cfg(feature = "compat")]
+    #[cfg(all(
+        feature = "compat",
+        not(any(target_os = "macos", target_os = "ios", target_os = "dragonfly"))
+    ))]
     {
         compat::redefine_symbols(out_path, feat_lib);
     }
 }
 
-#[cfg(feature = "compat")]
+// MacOS will prefix all exported symbols with a leading underscore.
+// Additionally, it seems that there are no collision issues when building with both llama and whisper crates, so the
+// compat feature can be ignored.
+
+#[cfg(all(
+    feature = "compat",
+    not(any(target_os = "macos", target_os = "ios", target_os = "dragonfly"))
+))]
 mod compat {
     use std::collections::HashSet;
     use std::fmt::{Display, Formatter};
