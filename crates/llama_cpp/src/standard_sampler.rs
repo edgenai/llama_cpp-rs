@@ -111,6 +111,9 @@ pub enum SamplerStage {
     ///
     /// See [`GrammarStage`] and [`LlamaGrammar`] for more information.
     Grammar(GrammarStage),
+
+    /// A custom, stateless [`SamplerStage`] defined using a function pointer.
+    Custom(fn(*mut llama_context, &[Token], llama_token_data_array, usize) -> llama_token_data_array)
 }
 
 impl SamplerStage {
@@ -195,6 +198,9 @@ impl SamplerStage {
                 SamplerStage::Grammar(stage) => {
                     candidates_p = stage.apply(context, tokens, candidates_p, min_keep)
                 }
+                SamplerStage::Custom(func) => {
+                    candidates_p = func(context, tokens, candidates_p, min_keep)
+                },
             }
         }
 
