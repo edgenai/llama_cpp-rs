@@ -6,7 +6,11 @@
 
 use std::ffi::{c_char, c_void, CStr};
 
-use tracing::{debug, error, info, warn};
+#[cfg(not(feature = "sys_verbosity"))]
+use tracing::info;
+#[cfg(feature = "sys_verbosity")]
+use tracing::trace;
+use tracing::{debug, error, warn};
 
 use llama_cpp_sys::ggml_log_level;
 
@@ -34,8 +38,14 @@ pub(crate) unsafe extern "C" fn llama_log_callback(
     };
 
     match level {
-        ggml_log_level::GGML_LOG_LEVEL_INFO => info!(target: "llama.cpp", "{text}"),
+        #[cfg(feature = "sys_verbosity")]
+        ggml_log_level::GGML_LOG_LEVEL_DEBUG => trace!(target: "llama.cpp", "{text}"),
+        #[cfg(feature = "sys_verbosity")]
+        ggml_log_level::GGML_LOG_LEVEL_INFO => debug!(target: "llama.cpp", "{text}"),
+        #[cfg(not(feature = "sys_verbosity"))]
         ggml_log_level::GGML_LOG_LEVEL_DEBUG => debug!(target: "llama.cpp", "{text}"),
+        #[cfg(not(feature = "sys_verbosity"))]
+        ggml_log_level::GGML_LOG_LEVEL_INFO => info!(target: "llama.cpp", "{text}"),
         ggml_log_level::GGML_LOG_LEVEL_WARN => warn!(target: "llama.cpp", "{text}"),
         ggml_log_level::GGML_LOG_LEVEL_ERROR => error!(target: "llama.cpp", "{text}"),
         _ => unimplemented!(),

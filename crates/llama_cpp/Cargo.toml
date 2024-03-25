@@ -40,6 +40,7 @@ blas = ["llama_cpp_sys/blas"]
 hipblas = ["llama_cpp_sys/hipblas"]
 clblast = ["llama_cpp_sys/clblast"]
 vulkan = ["llama_cpp_sys/vulkan"]
+sys_verbosity = [] # increase sys crate tracing log verbosity level
 
 [lib]
 doctest = false
