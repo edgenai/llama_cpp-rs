@@ -430,7 +430,7 @@ fn compile_cuda(cx: &mut Build, cxx: &mut Build, featless_cxx: Build) -> &'stati
     let mut nvcc = featless_cxx;
     nvcc.cuda(true)
         .flag("--forward-unknown-to-host-compiler")
-        .flag("-arch=native")
+        .flag("-arch=all")
         .define("K_QUANTS_PER_ITERATION", Some("2"))
         .define("GGML_CUDA_PEER_MAX_BATCH_SIZE", Some("128"));
 
