@@ -29,9 +29,9 @@ let mut completions = ctx.start_completing_with(StandardSampler::default(), 1024
 for completion in completions {
     print!("{completion}");
     let _ = io::stdout().flush();
-
+    
     decoded_tokens += 1;
-
+    
     if decoded_tokens > max_tokens {
         break;
     }
@@ -43,9 +43,27 @@ llama.cpp's low-level C API (`crates/llama_cpp_sys`). Contributions are welcome-
 
 ## Building
 
-Keep in mind that [llama.cpp](https://github.com/ggerganov/llama.cpp) is very computationally heavy, meaning standard 
-debug builds (running just `cargo build`/`cargo run`) will suffer greatly from the lack of optimisations. Therefore, unless 
+Keep in mind that [llama.cpp](https://github.com/ggerganov/llama.cpp) is very computationally heavy, meaning standard
+debug builds (running just `cargo build`/`cargo run`) will suffer greatly from the lack of optimisations. Therefore,
+unless
 debugging is really necessary, it is highly recommended to build and run using Cargo's `--release` flag.
+
+### Cargo Features
+
+Several of [llama.cpp](https://github.com/ggerganov/llama.cpp)'s backends are supported through features:
+
+- `cuda` - Enables the CUDA backend, the CUDA Toolkit is required for compilation if this feature is enabled.
+- `vulkan` - Enables the Vulkan backend, the Vulkan SDK is required for compilation if this feature is enabled.
+- `metal` - Enables the Metal backend, macOS only.
+- `hipblas` - Enables the hipBLAS/ROCm backend, ROCm is required for compilation if this feature is enabled.
+
+## Experimental
+
+Something that's provided by these bindings is the ability to predict context size in memory, however it should be
+noted that this is a highly experimental feature as this isn't something
+that [llama.cpp](https://github.com/ggerganov/llama.cpp) itself provides.
+The returned values may be highly inaccurate, however an attempt is made to never return values lower than the real
+size.
 
 ## License
 

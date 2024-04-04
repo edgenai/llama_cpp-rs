@@ -67,7 +67,7 @@ pub enum LlamaTokenizationError {
 ///
 /// This is a thin wrapper over an `Arc<*mut llama_model>`, which is used to share the
 /// model across threads.
-#[derive(Clone, Deref, DerefMut)]
+#[derive(Deref, DerefMut)]
 struct LlamaModelInner {
     #[deref]
     #[deref_mut]
@@ -76,8 +76,6 @@ struct LlamaModelInner {
 }
 
 unsafe impl Send for LlamaModelInner {}
-
-unsafe impl Sync for LlamaModelInner {}
 
 impl Drop for LlamaModelInner {
     fn drop(&mut self) {
@@ -100,7 +98,7 @@ impl Drop for LlamaModelInner {
 #[derive(Clone)]
 pub struct LlamaModel {
     /// A handle to the inner model on the other side of the C FFI boundary.
-    model: Arc<LlamaModelInner>,
+    model: Arc<Mutex<LlamaModelInner>>,
 
     /// The size of this model's vocabulary, in tokens.
     vocabulary_size: usize,
@@ -230,10 +228,10 @@ impl LlamaModel {
                 .unwrap_or(0);
 
             Ok(Self {
-                model: Arc::new(LlamaModelInner {
+                model: Arc::new(Mutex::new(LlamaModelInner {
                     model,
                     _backend_ref: backend_ref,
-                }),
+                })),
                 vocabulary_size: vocabulary_size as usize,
                 bos_token: Token(unsafe { llama_token_bos(model) }),
                 eos_token: Token(unsafe { llama_token_eos(model) }),
@@ -293,6 +291,8 @@ impl LlamaModel {
         let mut out_buf = Vec::with_capacity(content.len() + 2);
 
         let n_written_tokens = unsafe {
+            let model_lock = self.model.lock().unwrap();
+
             // SAFETY: The pointer ranges specified here are always valid, and `n_written_tokens`
             // is always less than `content.len()`.
             //
@@ -300,7 +300,7 @@ impl LlamaModel {
             //
             // `out_buf` is a `Vec<Token>`, and `Token` is `#[repr(transparent)]` over an `i32`.
             llama_tokenize(
-                **self.model,
+                **model_lock,
                 content.as_ptr() as *const i8,
                 content.len() as i32,
                 out_buf.as_mut_ptr() as *mut i32,
@@ -356,7 +356,11 @@ impl LlamaModel {
             token.0
         );
 
-        unsafe { CStr::from_ptr(llama_token_get_text(**self.model, token.0)) }.to_bytes()
+        unsafe {
+            let model_lock = self.model.lock().unwrap();
+            CStr::from_ptr(llama_token_get_text(**model_lock, token.0))
+        }
+        .to_bytes()
     }
 
     /// Converts the provided token into a `Vec<u8>` piece, using the model's vocabulary.
@@ -365,11 +369,12 @@ impl LlamaModel {
     pub fn token_to_byte_piece(&self, token: Token) -> Vec<u8> {
         let initial_size = 8u16;
         let mut buffer = vec![0u8; usize::from(initial_size)];
+        let model_lock = self.model.lock().unwrap();
         let size = unsafe {
             // SAFETY: Casting `*mut u8` to `*mut i8` is safe because `u8` and
             // `i8` have the same size and alignment.
             llama_token_to_piece(
-                **self.model,
+                **model_lock,
                 token.0,
                 buffer.as_mut_ptr() as *mut i8,
                 std::os::raw::c_int::from(initial_size),
@@ -383,7 +388,7 @@ impl LlamaModel {
                 // and `i8` have the same size and alignment. The length of
                 // buffer is accurate for this reason.
                 llama_token_to_piece(
-                    **self.model,
+                    **model_lock,
                     token.0,
                     buffer.as_mut_ptr() as *mut i8,
                     std::os::raw::c_int::from(buffer.len() as i32),
@@ -421,11 +426,13 @@ impl LlamaModel {
             let token_buf = &mut buf[i..];
 
             let size = unsafe {
+                let model_lock = self.model.lock().unwrap();
+
                 // SAFETY: Casting `*mut u8` to `*mut i8` is safe because `u8` and
                 // `i8` have the same size and alignment. The length of token_buf is
                 // accurate for this reason.
                 llama_cpp_sys::llama_token_to_piece(
-                    **self.model,
+                    **model_lock,
                     t.0,
                     token_buf.as_mut_ptr() as *mut i8,
                     token_buf.len() as i32,
@@ -463,9 +470,11 @@ impl LlamaModel {
         let max_batch = params.n_batch;
 
         let ctx = unsafe {
+            let model_lock = self.model.lock().unwrap();
+
             // SAFETY: due to `_model` being declared in the `LlamaContext`, `self` must live
             // for at least the lifetime of `LlamaContext`.
-            llama_new_context_with_model(**self.model, params)
+            llama_new_context_with_model(**model_lock, params)
         };
         if ctx.is_null() {
             return Err(LlamaContextError::SessionFailed);
@@ -640,9 +649,11 @@ impl LlamaModel {
 
         let context_params = params.as_context_params(batch_capacity);
         let context = unsafe {
+            let model_lock = self.model.lock().unwrap();
+
             // SAFETY: due to `_model` being declared in the `LlamaContext`, `self` must live
             // for at least the lifetime of `LlamaContext`.
-            llama_new_context_with_model(**self.model, context_params)
+            llama_new_context_with_model(**model_lock, context_params)
         };
 
         if context.is_null() {

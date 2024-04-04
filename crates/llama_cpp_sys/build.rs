@@ -1,5 +1,5 @@
 use std::env;
-use std::fs::File;
+use std::fs::{read_dir, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -424,8 +424,8 @@ fn compile_cuda(cx: &mut Build, cxx: &mut Build, featless_cxx: Build) -> &'stati
 
     // CUDA gets linked through the cudarc crate.
 
-    cx.define("GGML_USE_CUBLAS", None);
-    cxx.define("GGML_USE_CUBLAS", None);
+    cx.define("GGML_USE_CUDA", None);
+    cxx.define("GGML_USE_CUDA", None);
 
     let mut nvcc = featless_cxx;
     nvcc.cuda(true)
@@ -453,9 +453,17 @@ fn compile_cuda(cx: &mut Build, cxx: &mut Build, featless_cxx: Build) -> &'stati
     }
 
     let lib_name = "ggml-cuda";
+    let cuda_path = LLAMA_PATH.join("ggml-cuda");
+    let cuda_sources = read_dir(cuda_path.as_path())
+        .unwrap()
+        .map(|f| f.unwrap())
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".cu"))
+        .map(|entry| entry.path());
 
-    nvcc.file(LLAMA_PATH.join("ggml-cuda.cu"))
-        .include(LLAMA_PATH.join("ggml-cuda.h"))
+    nvcc.include(cuda_path.as_path())
+        .include(LLAMA_PATH.as_path())
+        .files(cuda_sources)
+        .file(LLAMA_PATH.join("ggml-cuda.cu"))
         .compile(lib_name);
 
     lib_name
@@ -579,6 +587,7 @@ fn compile_llama(mut cxx: Build, _out_path: impl AsRef<Path>) {
     println!("Compiling Llama.cpp..");
     cxx.include(LLAMA_PATH.as_path())
         .file(LLAMA_PATH.join("unicode.cpp"))
+        .file(LLAMA_PATH.join("unicode-data.cpp"))
         .file(LLAMA_PATH.join("llama.cpp"))
         .compile("llama");
 }

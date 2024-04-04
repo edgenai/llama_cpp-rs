@@ -1,5 +1,6 @@
 //! Functionality for the [`LlamaSession`] struct
 
+use derive_more::{Deref, DerefMut};
 use std::cmp::min;
 use std::ops::{Bound, RangeBounds};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -30,14 +31,13 @@ pub use params::*;
 /// The inner part of a [`LlamaSession`].
 ///
 /// This is wrapped in an `Arc` for sharing across thread boundaries.
+#[derive(Deref, DerefMut)]
 pub(crate) struct LlamaContextInner {
     /// A pointer to the inner context.
     pub(crate) ptr: *mut llama_context,
 }
 
 unsafe impl Send for LlamaContextInner {}
-
-unsafe impl Sync for LlamaContextInner {}
 
 impl Drop for LlamaContextInner {
     fn drop(&mut self) {
@@ -173,9 +173,11 @@ impl LlamaSession {
             trace!("Starting LLaMA decode for batch");
 
             let err = unsafe {
+                let session_guard = self.inner.ctx.lock().unwrap();
+
                 // SAFETY: `llama_decode` will not fail for a valid `batch`, which we correctly
                 // initialized above.
-                llama_decode(self.inner.ctx.lock().unwrap().ptr, batch.handle())
+                llama_decode(**session_guard, batch.handle())
             };
             if err != 0 {
                 return Err(LlamaContextError::DecodeFailed(err));
@@ -281,12 +283,12 @@ impl LlamaSession {
             if session.inner.last_batch_size.load(Ordering::SeqCst) == 0 {
                 // Remove last token
                 unsafe {
-                    llama_kv_cache_seq_rm(context.ptr, -1, token_buf.len() as i32 - 1, -1);
+                    llama_kv_cache_seq_rm(**context, -1, token_buf.len() as i32 - 1, -1);
                 }
 
                 // Decode last token
                 batch.add(*token_buf.last().unwrap(), current_pos, &[0], true);
-                let res = unsafe { llama_decode(context.ptr, batch.handle()) };
+                let res = unsafe { llama_decode(**context, batch.handle()) };
 
                 if res != 0 {
                     error!("Failed to decode context ({res})");
@@ -305,7 +307,7 @@ impl LlamaSession {
                 // Get logit values from the model and store them in a `llama_token_data_array`
                 let mut candidates: Vec<llama_token_data> = {
                     let i = session.inner.last_batch_size.load(Ordering::SeqCst);
-                    let logits = unsafe { llama_get_logits_ith(context.ptr, (i - 1) as i32) };
+                    let logits = unsafe { llama_get_logits_ith(**context, (i - 1) as i32) };
                     let logits = unsafe { std::slice::from_raw_parts(logits, vocab) };
 
                     logits
@@ -326,7 +328,7 @@ impl LlamaSession {
                 };
 
                 // Select the next token
-                let token = sampler.sample(context.ptr, &token_buf, candidates_p);
+                let token = sampler.sample(**context, &token_buf, candidates_p);
 
                 // Send the token to the `CompletionHandle`, exiting on failure
                 if let Err(e) = tx.send(token) {
@@ -342,7 +344,7 @@ impl LlamaSession {
 
                 // Create a batch with the generated token and decode it
                 batch.add(token, current_pos, &[0], true);
-                let res = unsafe { llama_decode(context.ptr, batch.handle()) };
+                let res = unsafe { llama_decode(**context, batch.handle()) };
 
                 if res != 0 {
                     error!("Failed to decode context ({res})");
@@ -408,10 +410,12 @@ impl LlamaSession {
             Bound::Unbounded => -1,
         };
 
-        let context = self.inner.ctx.lock().unwrap();
-
         // -1 here to match all sequences
-        let success = unsafe { llama_kv_cache_seq_rm(context.ptr, -1, start_bound, end_bound) };
+        let success = unsafe {
+            let context = self.inner.ctx.lock().unwrap();
+
+            llama_kv_cache_seq_rm(**context, -1, start_bound, end_bound)
+        };
 
         if !success {
             return Err(LlamaContextError::InvalidRange);
@@ -511,7 +515,7 @@ impl LlamaSession {
         #[allow(unused_mut)]
         let mut copy = self.model().create_session(self.inner.params.clone())?;
 
-        let size = unsafe { llama_get_state_size(ctx.ptr) };
+        let size = unsafe { llama_get_state_size(**ctx) };
         let mut buf = vec![0; size];
 
         // SAFETY: `llama_copy_state_data` and `llama_set_state_data` should never write/read more than
@@ -519,10 +523,10 @@ impl LlamaSession {
         //
         // `copy` was created from the same model as `self` and with the same parameters.
         unsafe {
-            let copy_size = llama_copy_state_data(ctx.ptr, buf.as_mut_ptr());
+            let copy_size = llama_copy_state_data(**ctx, buf.as_mut_ptr());
             assert!(copy_size <= size);
-            let set_size =
-                llama_set_state_data(copy.inner.ctx.lock().unwrap().ptr, buf.as_mut_ptr());
+            let copy_guard = copy.inner.ctx.lock().unwrap();
+            let set_size = llama_set_state_data(**copy_guard, buf.as_mut_ptr());
             assert_eq!(copy_size, set_size);
         }
 
@@ -542,6 +546,6 @@ impl LlamaSession {
     /// Currently there is no way to check the amount of memory occupied in devices.
     pub fn memory_size(&self) -> usize {
         let ctx = self.inner.ctx.lock().unwrap();
-        unsafe { llama_get_state_size(ctx.ptr) }
+        unsafe { llama_get_state_size(**ctx) }
     }
 }
