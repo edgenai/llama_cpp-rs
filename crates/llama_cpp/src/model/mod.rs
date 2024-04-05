@@ -18,9 +18,9 @@ use llama_cpp_sys::{
     ggml_row_size, llama_context, llama_context_params, llama_decode, llama_free_model,
     llama_get_embeddings_ith, llama_get_embeddings_seq, llama_kv_cache_clear,
     llama_load_model_from_file, llama_model, llama_model_meta_val_str, llama_n_ctx_train,
-    llama_n_embd, llama_n_vocab, llama_new_context_with_model, llama_token_bos, llama_token_eos,
-    llama_token_eot, llama_token_get_text, llama_token_middle, llama_token_nl, llama_token_prefix,
-    llama_token_suffix, llama_token_to_piece, llama_tokenize,
+    llama_n_embd, llama_n_vocab, llama_new_context_with_model, llama_token, llama_token_bos,
+    llama_token_eos, llama_token_eot, llama_token_get_text, llama_token_middle, llama_token_nl,
+    llama_token_prefix, llama_token_suffix, llama_token_to_piece, llama_tokenize,
 };
 pub use params::*;
 
@@ -301,9 +301,9 @@ impl LlamaModel {
             // `out_buf` is a `Vec<Token>`, and `Token` is `#[repr(transparent)]` over an `i32`.
             llama_tokenize(
                 **model_lock,
-                content.as_ptr() as *const i8,
+                content.as_ptr() as *const c_char,
                 content.len() as i32,
-                out_buf.as_mut_ptr() as *mut i32,
+                out_buf.as_mut_ptr() as *mut llama_token,
                 out_buf.capacity() as i32,
                 add_bos,
                 special,
@@ -376,7 +376,7 @@ impl LlamaModel {
             llama_token_to_piece(
                 **model_lock,
                 token.0,
-                buffer.as_mut_ptr() as *mut i8,
+                buffer.as_mut_ptr() as *mut c_char,
                 std::os::raw::c_int::from(initial_size),
             )
         };
@@ -390,7 +390,7 @@ impl LlamaModel {
                 llama_token_to_piece(
                     **model_lock,
                     token.0,
-                    buffer.as_mut_ptr() as *mut i8,
+                    buffer.as_mut_ptr() as *mut c_char,
                     std::os::raw::c_int::from(buffer.len() as i32),
                 )
             };
@@ -431,10 +431,10 @@ impl LlamaModel {
                 // SAFETY: Casting `*mut u8` to `*mut i8` is safe because `u8` and
                 // `i8` have the same size and alignment. The length of token_buf is
                 // accurate for this reason.
-                llama_cpp_sys::llama_token_to_piece(
+                llama_token_to_piece(
                     **model_lock,
                     t.0,
-                    token_buf.as_mut_ptr() as *mut i8,
+                    token_buf.as_mut_ptr() as *mut c_char,
                     token_buf.len() as i32,
                 )
             };

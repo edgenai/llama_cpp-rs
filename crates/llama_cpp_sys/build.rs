@@ -429,6 +429,7 @@ fn compile_cuda(cx: &mut Build, cxx: &mut Build, featless_cxx: Build) -> &'stati
 
     let mut nvcc = featless_cxx;
     nvcc.cuda(true)
+        .std("c++17")
         .flag("--forward-unknown-to-host-compiler")
         .flag("-arch=all")
         .define("K_QUANTS_PER_ITERATION", Some("2"))
