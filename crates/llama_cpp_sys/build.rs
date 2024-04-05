@@ -399,7 +399,7 @@ fn compile_hipblas(cx: &mut Build, cxx: &mut Build, mut hip: Build) -> &'static 
     cxx.include(&rocm_include);
 
     hip.compiler(rocm_hip_bin)
-        .std("c++17")
+        .std("c++11")
         .file(LLAMA_PATH.join(cuda_file))
         .include(LLAMA_PATH.join(cuda_header))
         .define("GGML_USE_HIPBLAS", None)
