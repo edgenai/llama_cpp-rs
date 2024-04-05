@@ -151,11 +151,9 @@ impl ParseCallbacks for GGMLLinkRename {
 fn push_common_flags(cx: &mut Build, cxx: &mut Build) {
     cx.static_flag(true)
         .cpp(false)
-        .std("c11")
         .define("GGML_SCHED_MAX_COPIES", "4");
     cxx.static_flag(true)
         .cpp(true)
-        .std("c++11")
         .define("GGML_SCHED_MAX_COPIES", "4");
 
     if !cfg!(debug_assertions) {
@@ -401,6 +399,7 @@ fn compile_hipblas(cx: &mut Build, cxx: &mut Build, mut hip: Build) -> &'static 
     cxx.include(&rocm_include);
 
     hip.compiler(rocm_hip_bin)
+        .std("c++17")
         .file(LLAMA_PATH.join(cuda_file))
         .include(LLAMA_PATH.join(cuda_header))
         .define("GGML_USE_HIPBLAS", None)
@@ -429,7 +428,6 @@ fn compile_cuda(cx: &mut Build, cxx: &mut Build, featless_cxx: Build) -> &'stati
 
     let mut nvcc = featless_cxx;
     nvcc.cuda(true)
-        .std("c++17")
         .flag("--forward-unknown-to-host-compiler")
         .flag("-arch=all")
         .define("K_QUANTS_PER_ITERATION", Some("2"))
@@ -576,7 +574,8 @@ fn compile_vulkan(cx: &mut Build, cxx: &mut Build) -> &'static str {
 
 fn compile_ggml(mut cx: Build) {
     println!("Compiling GGML..");
-    cx.include(LLAMA_PATH.as_path())
+    cx.std("c11")
+        .include(LLAMA_PATH.as_path())
         .file(LLAMA_PATH.join("ggml.c"))
         .file(LLAMA_PATH.join("ggml-alloc.c"))
         .file(LLAMA_PATH.join("ggml-backend.c"))
@@ -586,7 +585,8 @@ fn compile_ggml(mut cx: Build) {
 
 fn compile_llama(mut cxx: Build, _out_path: impl AsRef<Path>) {
     println!("Compiling Llama.cpp..");
-    cxx.include(LLAMA_PATH.as_path())
+    cxx.std("c++11")
+        .include(LLAMA_PATH.as_path())
         .file(LLAMA_PATH.join("unicode.cpp"))
         .file(LLAMA_PATH.join("unicode-data.cpp"))
         .file(LLAMA_PATH.join("llama.cpp"))
