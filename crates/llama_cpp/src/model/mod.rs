@@ -550,10 +550,10 @@ impl LlamaModel {
         // };
 
         ResourceUsage {
-            host_memory: cache_size + output_size,
+            host_memory: output_size,
             // TODO while llama doesn't offer memory estimation utilities, this is the best that can be done realistically
             // https://github.com/ggerganov/llama.cpp/issues/4315
-            device_memory: output_size,
+            device_memory: cache_size + output_size,
         }
     }
 
@@ -679,6 +679,7 @@ impl LlamaModel {
             for (i, token) in input.iter().enumerate() {
                 batch.add(*token, i, &[batch_input_count as i32], false);
             }
+            batch.set_logits(batch.tokens() - 1, true);
             batch_input_count += 1;
         }
 
