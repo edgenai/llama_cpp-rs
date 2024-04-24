@@ -492,23 +492,20 @@ fn compile_metal(cx: &mut Build, cxx: &mut Build) {
         .expect("Failed to open ggml-metal-embed.asm file");
 
     let ggml_metal_shader_out_path = PathBuf::from(&out_dir).join("ggml-metal.metal");
-
     let common = LLAMA_PATH.join("ggml-common.h");
+
+    let input_file = File::open(ggml_metal_shader_path).expect("Failed to open input file");
+    let mut output_file = File::create(&ggml_metal_shader_out_path).expect("Failed to create output file");
+
     let output = Command::new("sed")
-        .current_dir(PathBuf::from(&out_dir))
         .arg("-e")
-        .arg(format!(
-            "'/#include \"ggml-common.h\"/r ${}'",
-            common.to_string_lossy()
-        ))
-        .args(["-e", "'/#include \"ggml-common.h\"/d'"])
-        .arg(format!("< ${}", ggml_metal_shader_path.to_string_lossy()))
-        .arg(format!(
-            "> ${}",
-            ggml_metal_shader_out_path.to_string_lossy()
-        ))
+        .arg(format!("/#include \"ggml-common.h\"/r {}", common.to_string_lossy()))
+        .arg("-e")
+        .arg("/#include \"ggml-common.h\"/d")
+        .stdin(input_file)
+        .stdout(output_file)
         .output()
-        .unwrap_or_else(move |e| panic!("Failed to run \"sed\". ({e})"));
+        .expect("Failed to execute command");
     if !output.status.success() {
         panic!(
             "An error has occurred while embedding common file ({}):\n{}",
