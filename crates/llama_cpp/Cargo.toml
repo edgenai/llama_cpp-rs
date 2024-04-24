@@ -15,7 +15,7 @@ futures = { workspace = true }
 llama_cpp_sys = { version = "^0.3.1", path = "../llama_cpp_sys", default-features = false }
 num_cpus = "1.16.0"
 thiserror = "1.0.57"
-tokio = { workspace = true, features = ["sync", "rt"] }
+tokio = { workspace = true, features = ["sync", "rt", "rt-multi-thread"] }
 tracing = "0.1.40"
 
 [features]
