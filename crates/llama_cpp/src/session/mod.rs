@@ -219,7 +219,7 @@ impl LlamaSession {
         let tokens = self
             .inner
             .model
-            .tokenize_bytes(ctx.as_ref(), false, false)?
+            .tokenize_bytes(ctx.as_ref(), false, true)?
             .into_boxed_slice();
 
         self.advance_context_with_tokens(tokens)
