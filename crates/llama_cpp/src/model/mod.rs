@@ -276,7 +276,7 @@ impl LlamaModel {
     ///
     /// * `content` - The data slice to be tokenized.
     /// * `add_bos` - Add the beginning of sentence token to the end of `content`.
-    /// * `add_bos` - Parse special tokens. If false, special tokens are parsed as if they were plain text.
+    /// * `special` - Parse special tokens. If false, special tokens are parsed as if they were plain text.
     pub fn tokenize_bytes(
         &self,
         content: impl AsRef<[u8]>,

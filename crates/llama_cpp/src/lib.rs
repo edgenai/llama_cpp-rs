@@ -95,6 +95,7 @@ pub use model::*;
 pub use session::*;
 
 pub mod grammar;
+mod multimodal;
 /// The standard sampler implementation.
 pub mod standard_sampler;
 

@@ -96,11 +96,20 @@ fn compile_bindings(out_path: &Path) {
     let mut bindings = bindgen::Builder::default()
         .header(LLAMA_PATH.join("ggml.h").to_string_lossy())
         .header(LLAMA_PATH.join("llama.h").to_string_lossy())
+        .header(
+            LLAMA_PATH
+                .join("examples")
+                .join("llava")
+                .join("clip.h")
+                .to_string_lossy(),
+        )
         .derive_partialeq(true)
         .allowlist_function("ggml_.*")
         .allowlist_type("ggml_.*")
         .allowlist_function("llama_.*")
         .allowlist_type("llama_.*")
+        .allowlist_function("clip_.*")
+        .allowlist_type("clip_.*")
         .default_enum_style(EnumVariation::Rust {
             non_exhaustive: true,
         })
@@ -495,11 +504,15 @@ fn compile_metal(cx: &mut Build, cxx: &mut Build) {
     let common = LLAMA_PATH.join("ggml-common.h");
 
     let input_file = File::open(ggml_metal_shader_path).expect("Failed to open input file");
-    let mut output_file = File::create(&ggml_metal_shader_out_path).expect("Failed to create output file");
+    let output_file =
+        File::create(&ggml_metal_shader_out_path).expect("Failed to create output file");
 
     let output = Command::new("sed")
         .arg("-e")
-        .arg(format!("/#include \"ggml-common.h\"/r {}", common.to_string_lossy()))
+        .arg(format!(
+            "/#include \"ggml-common.h\"/r {}",
+            common.to_string_lossy()
+        ))
         .arg("-e")
         .arg("/#include \"ggml-common.h\"/d")
         .stdin(input_file)
@@ -613,6 +626,8 @@ fn compile_llama(mut cxx: Build, _out_path: impl AsRef<Path>) {
         .file(LLAMA_PATH.join("unicode.cpp"))
         .file(LLAMA_PATH.join("unicode-data.cpp"))
         .file(LLAMA_PATH.join("llama.cpp"))
+        .include(LLAMA_PATH.join("common").as_path())
+        .file(LLAMA_PATH.join("examples").join("llava").join("clip.cpp"))
         .compile("llama");
 }
 
