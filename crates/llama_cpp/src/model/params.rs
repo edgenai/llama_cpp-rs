@@ -112,6 +112,10 @@ impl From<LlamaParams> for llama_model_params {
             vocab_only: value.vocab_only,
             use_mmap: value.use_mmap,
             use_mlock: value.use_mlock,
+            #[cfg(not(debug_assertions))]
+            check_tensors: false,
+            #[cfg(debug_assertions)]
+            check_tensors: true,
         }
     }
 }

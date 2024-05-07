@@ -13,7 +13,7 @@
 #ifndef BUILD_INFO_H
 #define BUILD_INFO_H
 
-#define BUILD_NUMBER 2589
-#define BUILD_COMMIT "60cdf40"
+#define BUILD_NUMBER 2797
+#define BUILD_COMMIT "04976db"
 
 #endif // BUILD_INFO_H

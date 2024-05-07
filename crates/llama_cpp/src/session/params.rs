@@ -45,7 +45,7 @@ impl From<llama_pooling_type> for PoolingType {
 }
 
 /// A rope scaling type.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum RopeScaling {
     /// Unspecified.
     Unspecified,
@@ -85,7 +85,7 @@ impl From<llama_rope_scaling_type> for RopeScaling {
 }
 
 /// The type of key or value in the cache.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum CacheType {
     /// 32 bit float.
     F32,
@@ -217,7 +217,7 @@ impl From<ggml_type> for CacheType {
 }
 
 /// Session-specific parameters.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct SessionParams {
     /// RNG seed, [`u32::MAX`] for random (default)
     pub seed: u32,
@@ -347,6 +347,7 @@ impl From<SessionParams> for llama_context_params {
             embeddings: value.embedding,
             offload_kqv: value.offload_kqv,
             pooling_type: value.pooling.into(),
+            flash_attn: false, // TODO
             abort_callback: None,
             abort_callback_data: null_mut(),
         }
