@@ -6,17 +6,20 @@
 #[cfg(test)]
 mod tests {
     use std::io;
-    use std::io::Write;
+    use std::io::{Cursor, Write};
     use std::path::Path;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
 
     use futures::StreamExt;
+    use image::io::Reader;
+    use image::ImageFormat;
     use tokio::select;
     use tokio::time::Instant;
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
+    use llama_cpp::multimodal::LlavaModel;
     use llama_cpp::standard_sampler::StandardSampler;
     use llama_cpp::{
         CompletionHandle, EmbeddingsParams, LlamaModel, LlamaParams, SessionParams, TokensToStrings,
@@ -84,6 +87,7 @@ mod tests {
         }
     }
 
+    #[ignore]
     #[tokio::test]
     async fn execute_completions() {
         init_tracing();
@@ -171,6 +175,7 @@ mod tests {
         }
     }
 
+    #[ignore]
     #[tokio::test]
     async fn embed() {
         init_tracing();
@@ -234,6 +239,110 @@ mod tests {
                 assert!(mag < 1. + ERROR, "Vector magnitude is not close to 1");
                 assert!(mag > 1. - ERROR, "Vector magnitude is not close to 1");
             }
+        }
+    }
+
+    // #[ignore]
+    #[tokio::test]
+    async fn llava() {
+        init_tracing();
+
+        let dir = std::env::var("LLAMA_CPP_TEST_MODELS").unwrap_or_else(|_| {
+            panic!(
+                "LLAMA_CPP_TEST_MODELS environment variable not set. \
+                Please set this to the directory containing one or more GGUF models."
+            );
+        });
+
+        let mmproj_path = std::env::var("LLAMA_CPP_TEST_MMPROJ").unwrap_or_else(|_| {
+            panic!(
+                "LLAMA_CPP_TEST_MMPROJ environment variable not set. \
+                Please set this to the path of a multimodal projector GGUF file."
+            );
+        });
+
+        let image_path = std::env::var("LLAMA_CPP_TEST_IMAGE").unwrap_or_else(|_| {
+            panic!(
+                "LLAMA_CPP_TEST_IMAGE environment variable not set. \
+                Please set this to the path of an image file."
+            );
+        });
+
+        let img = {
+            let reader = Reader::open(image_path)
+                .expect("Failed to open image")
+                .decode()
+                .expect("Failed to decode image");
+
+            // Llama.cpp only accepts encoded images
+            let bytes = vec![];
+            let mut cursor = Cursor::new(bytes);
+            reader
+                .write_to(&mut cursor, ImageFormat::Png)
+                .expect("Failed to re-encode image");
+            cursor.into_inner()
+        };
+
+        let models = list_models(dir).await;
+
+        for model in models {
+            let params = LlamaParams::default();
+
+            let model = LlavaModel::load_from_file_async(model, params, &mmproj_path)
+                .await
+                .expect("Failed to load model");
+
+            let params = SessionParams {
+                n_ctx: 2048,
+                ..Default::default()
+            };
+
+            let mut session = model
+                .create_session(params)
+                .expect("Failed to create session");
+
+            session
+                .advance_context_async("<|SYSTEM|>You are a helpful assistant.")
+                .await
+                .unwrap();
+            session
+                .advance_with_image(&img)
+                .expect("Failed to advance context with image");
+            session
+                .advance_context_async("<|USER|>Provide a full description.")
+                .await
+                .unwrap();
+            session
+                .advance_context_async("<|ASSISTANT|>")
+                .await
+                .unwrap();
+
+            let mut completions = session
+                .start_completing_with(StandardSampler::default(), 1024)
+                .expect("Failed to start completing")
+                .into_strings();
+            let timeout_by = Instant::now() + Duration::from_secs(500);
+
+            println!();
+
+            loop {
+                select! {
+                    _ = tokio::time::sleep_until(timeout_by) => {
+                        break;
+                    }
+                    completion = <TokensToStrings<CompletionHandle> as StreamExt>::next(&mut completions) => {
+                        if let Some(completion) = completion {
+                            print!("{completion}");
+                            let _ = io::stdout().flush();
+                        } else {
+                            break;
+                        }
+                        continue;
+                    }
+                }
+            }
+            println!();
+            println!();
         }
     }
 }

@@ -118,6 +118,10 @@ pub enum LlamaContextError {
     /// Tried to start completing before advancing the context.
     #[error("cannot start completing without any history")]
     NoContext,
+
+    /// Failed to allocate nul-terminated C string.
+    #[error(transparent)]
+    Null(#[from] std::ffi::NulError),
 }
 
 impl LlamaSession {

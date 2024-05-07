@@ -103,6 +103,14 @@ fn compile_bindings(out_path: &Path) {
                 .join("clip.h")
                 .to_string_lossy(),
         )
+        .clang_arg(format!("-I{}", LLAMA_PATH.to_string_lossy()))
+        .header(
+            LLAMA_PATH
+                .join("examples")
+                .join("llava")
+                .join("llava.h")
+                .to_string_lossy(),
+        )
         .derive_partialeq(true)
         .allowlist_function("ggml_.*")
         .allowlist_type("ggml_.*")
@@ -110,6 +118,8 @@ fn compile_bindings(out_path: &Path) {
         .allowlist_type("llama_.*")
         .allowlist_function("clip_.*")
         .allowlist_type("clip_.*")
+        .allowlist_function("llava_.*")
+        .allowlist_type("llava_.*")
         .default_enum_style(EnumVariation::Rust {
             non_exhaustive: true,
         })
@@ -628,6 +638,7 @@ fn compile_llama(mut cxx: Build, _out_path: impl AsRef<Path>) {
         .file(LLAMA_PATH.join("llama.cpp"))
         .include(LLAMA_PATH.join("common").as_path())
         .file(LLAMA_PATH.join("examples").join("llava").join("clip.cpp"))
+        .file(LLAMA_PATH.join("examples").join("llava").join("llava.cpp"))
         .compile("llama");
 }
 
