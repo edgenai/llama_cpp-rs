@@ -349,6 +349,7 @@ impl From<SessionParams> for llama_context_params {
             pooling_type: value.pooling.into(),
             abort_callback: None,
             abort_callback_data: null_mut(),
+            flash_attn: false,
         }
     }
 }
