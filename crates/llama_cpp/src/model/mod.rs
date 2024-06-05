@@ -384,6 +384,7 @@ impl LlamaModel {
                 token.0,
                 buffer.as_mut_ptr() as *mut c_char,
                 std::os::raw::c_int::from(initial_size),
+                false,
             )
         };
 
@@ -398,6 +399,7 @@ impl LlamaModel {
                     token.0,
                     buffer.as_mut_ptr() as *mut c_char,
                     std::os::raw::c_int::from(buffer.len() as i32),
+                    false,
                 )
             };
             assert_eq!(size as usize, buffer.len(), "Buffer length doesn't match");
@@ -442,6 +444,7 @@ impl LlamaModel {
                     t.0,
                     token_buf.as_mut_ptr() as *mut c_char,
                     token_buf.len() as i32,
+                    false,
                 )
             };
 
